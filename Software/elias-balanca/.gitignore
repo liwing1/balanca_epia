@@ -1,0 +1,51 @@
+# Compiled object files, libraries, and executable
+/build/
+*.o
+*.d
+*.a
+*.elf
+*.bin
+*.map
+*.out
+
+# ESP-IDF specific build directories
+/sdkconfig
+/sdkconfig.old
+/CMakeFiles/
+/CMakeCache.txt
+/Makefile
+/makefile
+/cmake_install.cmake
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Python bytecode and other Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# VScode specific files
+.vscode/
+*.code-workspace
+
+# CLion specific files
+.idea/
+*.iml
+cmake-build-debug/
+cmake-build-release/
+
+# Generated documentation
+/docs/_build/
+html/
+
+# Backup files
+*~
+*.bak
+*.swp
+
+/managed_components/
+/.devcontainer/
+
+
