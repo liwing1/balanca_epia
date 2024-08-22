@@ -10,6 +10,8 @@
 
 #include "MCP3564.h"
 
+#define BUTTON_PIN  38
+
 // Create a semaphore used to report the completion of async memcpy
 SemaphoreHandle_t semphr;
 async_memcpy_config_t config = ASYNC_MEMCPY_DEFAULT_CONFIG();
@@ -26,12 +28,12 @@ static bool my_async_memcpy_cb(async_memcpy_handle_t mcp_hdl, async_memcpy_event
 }
 
 MCP3564_t MCP_instance = {
-    .gpio_num_miso = GPIO_NUM_13,
-    .gpio_num_mosi = GPIO_NUM_11,
-    .gpio_num_clk = GPIO_NUM_12,
-    .gpio_num_cs = GPIO_NUM_10,
-    .gpio_num_pwm = GPIO_NUM_18,
-    .gpio_num_ndrdy = GPIO_NUM_1,
+    .gpio_num_pwm       = GPIO_NUM_9,
+    .gpio_num_ndrdy     = GPIO_NUM_10,
+    .gpio_num_miso      = GPIO_NUM_11,
+    .gpio_num_cs        = GPIO_NUM_12,
+    .gpio_num_clk       = GPIO_NUM_13,
+    .gpio_num_mosi      = GPIO_NUM_14,
     .flag_drdy = 0,
     .buffer = {0}
 };
@@ -41,7 +43,7 @@ void monitor_task(void* p)
     uint32_t idx = 0;
     while(1)
     {
-        if(gpio_get_level(GPIO_NUM_2) == 0)
+        if(gpio_get_level(BUTTON_PIN) == 0)
         {
             idx = MCP_instance.flag_drdy;
 
@@ -50,7 +52,7 @@ void monitor_task(void* p)
             // Do something else here
             xSemaphoreTake(semphr, portMAX_DELAY); // Wait until the buffer copy is done
 
-            printf("volt: %ld\n", buffer[200]);
+            printf("volt: %ld\n", buffer[0]);
             printf("drdy: %ld\n", idx);
         }
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -63,7 +65,7 @@ void app_main(void)
 
     // First enable interrupts
     gpio_config_t gpio_cfg = {
-        .pin_bit_mask = 1 << GPIO_NUM_2,
+        .pin_bit_mask = 1ULL << BUTTON_PIN,
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
