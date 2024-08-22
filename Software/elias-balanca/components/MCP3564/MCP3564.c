@@ -319,19 +319,19 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
     //TIMER --> Disabled.
     writeSingleRegister(mcp_obj, ((_TIMER_ << 2) | _WRT_CTRL_), 0x000000);
 
-    //SCAN --> CH0 - CH1.
-    writeSingleRegister(mcp_obj, ((_SCAN_ << 2) | _WRT_CTRL_), 0x000100);
+    //SCAN --> Disabled.
+    writeSingleRegister(mcp_obj, ((_SCAN_ << 2) | _WRT_CTRL_), 0x0000FF);
 
-    //MUX --> VIN+ = CH1, VIN- = CH0 --> (0b00000001).
-    writeSingleRegister(mcp_obj, ((_MUX_ << 2) | _WRT_CTRL_), 0x01);
+    //MUX --> VIN+ = CH0, VIN- = CH1 --> (0b00000001).
+    writeSingleRegister(mcp_obj, ((_MUX_ << 2) | _WRT_CTRL_), 0xBC);
 
-    //IRQ --> IRQ Mode = Low level active IRQ Output  --> (0b00000100).
+    //IRQ --> IRQ Mode = Low level active IRQ Output  --> (0b00000000).
     writeSingleRegister(mcp_obj, ((_IRQ_ << 2) | _WRT_CTRL_), 0x04);
 
-    //CONFIG3 --> Conv. Mod = Cont Conv. Mode, FORMAT = 32b + CHid,
+    //CONFIG3 --> Conv. Mod = One-Shot Conv. Mode, FORMAT = 32b + chid,
     //CRC_FORMAT = 16b, CRC-COM = Disabled,
-    //OFFSETCAL = Enabled, GAINCAL = Enabled --> (0b11110011).
-    writeSingleRegister(mcp_obj, ((_CONFIG3_ << 2) | _WRT_CTRL_), 0xF3);
+    //OFFSETCAL = Enabled, GAINCAL = Enabled --> (0b10110011).
+    writeSingleRegister(mcp_obj, ((_CONFIG3_ << 2) | _WRT_CTRL_), 0xB3);
     
     //CONFIG2 --> BOOST = 1x, GAIN = 1x, AZ_MUX = 0 --> (0b10001011).
     writeSingleRegister(mcp_obj, ((_CONFIG2_ << 2) | _WRT_CTRL_), 0x8B);
@@ -340,7 +340,7 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
     writeSingleRegister(mcp_obj, ((_CONFIG1_ << 2) | _WRT_CTRL_), 0x0C);
 
     //CONFIG0 --> CLK_SEL = extCLK, CS_SEL = No Bias, ADC_MODE = Standby Mode --> (0b11000010).
-    writeSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _WRT_CTRL_), 0xD2);
+    writeSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _WRT_CTRL_), 0xE2);
 }
 
 void MCP3564_startConversion(MCP3564_t* mcp_obj)

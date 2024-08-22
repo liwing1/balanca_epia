@@ -40,20 +40,21 @@ MCP3564_t MCP_instance = {
 
 void monitor_task(void* p)
 {
-    uint32_t idx = 0;
+    float volts[8] = {0};
+
     while(1)
     {
         if(gpio_get_level(BUTTON_PIN) == 0)
         {
-            idx = MCP_instance.flag_drdy;
+            vTaskDelay(pdMS_TO_TICKS(100));
 
-            // Called from user's context
-            ESP_ERROR_CHECK(esp_async_memcpy(driver, buffer, MCP_instance.buffer, MCP3564_BUFFER_SIZE, my_async_memcpy_cb, semphr));
-            // Do something else here
-            xSemaphoreTake(semphr, portMAX_DELAY); // Wait until the buffer copy is done
+            MCP3564_readChannels(&MCP_instance, volts);
 
-            printf("volt: %ld\n", buffer[0]);
-            printf("drdy: %ld\n", idx);
+            printf("READ VOLTS:\n");
+            for(uint8_t i = 0; i < 8; i++)
+            {
+                printf("%d = %f\n", i, volts[i]);
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -76,6 +77,7 @@ void app_main(void)
     semphr = xSemaphoreCreateBinary();
     ESP_ERROR_CHECK(esp_async_memcpy_install(&config, &driver)); // install driver with default DMA engine
 
+    vTaskDelay(pdMS_TO_TICKS(1000));
     printf("Start Conv\n");
     MCP3564_startConversion(&MCP_instance);
 
