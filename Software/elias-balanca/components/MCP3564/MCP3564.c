@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/queue.h"
 #include "driver/spi_master.h"
 #include "driver/ledc.h"
 #include "esp_log.h"
@@ -34,9 +33,6 @@
 
 #define LEDC_DUTY               (1) // Set duty to 50%. (2 ** 1) * 50% = 4096
 #define LEDC_FREQUENCY          (3146850 * 4) // Frequency in Hertz. Set frequency at 4 kHz
-static QueueHandle_t gpio_evt_queue = NULL;
-
-uint32_t contador = 0;
 
 // Global variables
 static uint8_t tx_data = 0; // Data to be transmitted
@@ -52,24 +48,8 @@ static spi_transaction_t trans = {
 
 static void IRAM_ATTR GPIO_DRDY_IRQHandler(void* arg)
 {
-    //uint32_t gpio_num = ((MCP3564_t*)arg)->gpio_num_ndrdy;
-    
-    uint32_t address = (uint32_t)&((MCP3564_t*)arg)->gpio_num_miso;
-    xQueueSendFromISR(gpio_evt_queue, &address, NULL);
-}
-
-void spi_task(void* arg)
-{
-    uint32_t addr;
-    MCP3564_t* mcp_obj;
-    while(1) {
-        if(xQueueReceive(gpio_evt_queue, &addr, portMAX_DELAY)) {
-            mcp_obj = (MCP3564_t*)addr;
-            mcp_obj->buffer[mcp_obj->flag_drdy] = MCP3564_signExtend(MCP3564_readVoltage(mcp_obj));
-
-            mcp_obj->flag_drdy = (mcp_obj->flag_drdy + 1) & (MCP3564_BUFFER_MASK);
-        }
-    }
+    uint32_t gpio_num = ((MCP3564_t*)arg)->gpio_num_ndrdy;
+    if(gpio_num) ((MCP3564_t*)arg)->flag_drdy++;
 }
 
 static void example_ledc_init(MCP3564_t* mcp_obj)
@@ -110,7 +90,7 @@ static void init_spi(MCP3564_t* mcp_obj)
         .sclk_io_num = mcp_obj->gpio_num_clk,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = 1
+        .max_transfer_sz = (1 + 4)
     };
 
     spi_device_interface_config_t dev_config = {
@@ -121,10 +101,10 @@ static void init_spi(MCP3564_t* mcp_obj)
         .duty_cycle_pos = 0,
         .cs_ena_pretrans = 5,
         .cs_ena_posttrans = 0,
-        .clock_speed_hz = SPI_CLOCK_SPEED,  // 20 MHz clock speed
+        .clock_speed_hz = SPI_CLOCK_SPEED,  // 1 MHz clock speed
         .spics_io_num = -1,
         .flags = 0,
-        .queue_size = 1,
+        .queue_size = 16,
         .pre_cb = NULL,
         .post_cb = NULL
     };
@@ -286,9 +266,6 @@ int32_t MCP3564_signExtend(uint32_t Bytes)
 
 void MCP3564_startUp(MCP3564_t* mcp_obj) 
 {
-    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
-    xTaskCreatePinnedToCore(spi_task, "spi_task", 2048*5, NULL, 24, NULL, PRO_CPU_NUM);
-
     example_ledc_init(mcp_obj);
     init_spi(mcp_obj);
 
@@ -334,18 +311,18 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
     writeSingleRegister(mcp_obj, ((_CONFIG3_ << 2) | _WRT_CTRL_), 0xB3);
     
     //CONFIG2 --> BOOST = 1x, GAIN = 1x, AZ_MUX = 0 --> (0b10001011).
-    writeSingleRegister(mcp_obj, ((_CONFIG2_ << 2) | _WRT_CTRL_), 0x8B);
+    writeSingleRegister(mcp_obj, ((_CONFIG2_ << 2) | _WRT_CTRL_), 0x89);
 
     //CONFIG1 --> AMCLK = MCLK, OSR = 256 --> (0b00001100).      
     writeSingleRegister(mcp_obj, ((_CONFIG1_ << 2) | _WRT_CTRL_), 0x0C);
 
-    //CONFIG0 --> CLK_SEL = extCLK, CS_SEL = No Bias, ADC_MODE = Standby Mode --> (0b11000010).
-    writeSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _WRT_CTRL_), 0xE2);
+    //CONFIG0 --> VREF_SEL = extVOLT, CLK_SEL = extCLK, CS_SEL = No Bias, ADC_MODE = Standby Mode --> (0b00010010).
+    writeSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _WRT_CTRL_), 0x12);
 }
 
 void MCP3564_startConversion(MCP3564_t* mcp_obj)
 {
-    writeSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _WRT_CTRL_), 0xD3);
+    writeSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _WRT_CTRL_), 0x13);
 }
 
 uint32_t MCP3564_readVoltage(MCP3564_t* mcp_obj)
@@ -369,8 +346,7 @@ uint32_t MCP3564_readChannels(MCP3564_t* mcp_obj, float* buffer)
         }
         
         uint32_t readV = MCP3564_readVoltage(mcp_obj);
-
-        if((readV & 0xF0000000) != 0x70000000)
+        if(readV)
         {
             column = ((readV & 0xF0000000) >> 7 * 4);
             buffer[column] = (float)MCP3564_signExtend(readV) * 3.3/8388608.0;

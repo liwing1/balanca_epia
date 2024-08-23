@@ -50,9 +50,8 @@ void monitor_task(void* p)
 
             MCP3564_readChannels(&MCP_instance, volts);
 
-            printf("READ VOLTS:\n");
-            for(uint8_t i = 0; i < 8; i++)
-            {
+            printf("VOLTS\n");
+            for (uint8_t i = 0; i < 8; i++) {
                 printf("%d = %f\n", i, volts[i]);
             }
         }
