@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "MCP3564.h"
 
+#define TAG "MCP3564"
 /************************* MCP3564 REGISTER DEFS ******************************/
 
 #define _ADCDATA_ 0x00                      //MCP3564 ADCDATA Register Address.        
@@ -32,19 +33,9 @@
 #define nCRCCFG_STATUS  BIT1
 
 #define LEDC_DUTY               (1) // Set duty to 50%. (2 ** 1) * 50% = 4096
-#define LEDC_FREQUENCY          (3146850 * 4) // Frequency in Hertz. Set frequency at 4 kHz
-
-// Global variables
-static uint8_t tx_data = 0; // Data to be transmitted
-static uint8_t rx_data = 0; // Buffer to store received data
-static uint8_t g_status = 0;
+#define LEDC_FREQUENCY          (12000000) // Frequency in Hertz. Set frequency at 4 kHz
 
 static spi_device_handle_t spi;
-static spi_transaction_t trans = {
-    .length = 8,
-    .tx_buffer = &tx_data,
-    .rx_buffer = &rx_data
-};
 
 static void IRAM_ATTR GPIO_DRDY_IRQHandler(void* arg)
 {
@@ -90,7 +81,7 @@ static void init_spi(MCP3564_t* mcp_obj)
         .sclk_io_num = mcp_obj->gpio_num_clk,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = (1 + 4)
+        .max_transfer_sz = 0
     };
 
     spi_device_interface_config_t dev_config = {
@@ -99,10 +90,10 @@ static void init_spi(MCP3564_t* mcp_obj)
         .dummy_bits = 0,
         .mode = 0,  // can either be spi mode 0,0 or 1,1
         .duty_cycle_pos = 0,
-        .cs_ena_pretrans = 5,
+        .cs_ena_pretrans = 0,
         .cs_ena_posttrans = 0,
         .clock_speed_hz = SPI_CLOCK_SPEED,  // 1 MHz clock speed
-        .spics_io_num = -1,
+        .spics_io_num = mcp_obj->gpio_num_cs,
         .flags = 0,
         .queue_size = 16,
         .pre_cb = NULL,
@@ -113,16 +104,11 @@ static void init_spi(MCP3564_t* mcp_obj)
     spi_bus_add_device(SPI2_HOST, &dev_config, &spi);    
 }
 
-static uint8_t spiSendByte(uint8_t byte)
-{
-    tx_data = byte;
-    spi_device_transmit(spi, &trans);
-    //ESP_LOGW(TAG, "sendByte: %x\n", byte);   //Debug
-    return rx_data;
-}
-
 static void writeSingleRegister(MCP3564_t* mcp_obj, uint8_t WRT_CMD, uint32_t WRT_DATA)
 {
+    spi_transaction_t trans = {0};
+    trans.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_USE_RXDATA;
+
     uint8_t WRT_DATA_LOW;                                  //Register-Data Low-Byte.
     uint8_t WRT_DATA_HIGH;                                 //Register-Data High-Byte.
     uint8_t WRT_DATA_UPPER;                                //Register-Data Upper-Byte.
@@ -136,122 +122,65 @@ static void writeSingleRegister(MCP3564_t* mcp_obj, uint8_t WRT_CMD, uint32_t WR
 
     if (REG_ADDR == _CONFIG0_ || REG_ADDR == _CONFIG1_ || REG_ADDR == _CONFIG2_ || REG_ADDR == _CONFIG3_ || REG_ADDR == _IRQ_ || REG_ADDR == _MUX_ || REG_ADDR == _LOCK_) 
     {
-        gpio_set_level(mcp_obj->gpio_num_cs, 0);            //Assert CS Low on 8-bit HPC Curiosity --> Enable MCP3564 SPI Interface.
-
-        //Transmit Write-CMD as one 8-bit packet.
-        //Wait for SPI Shift Register to complete TX of Write-CMD.
-        //Read SSP2BUF to retrieve MCP3564 STATUS-Byte.
-        g_status = spiSendByte(WRT_CMD);
-
-        //Transmit Register-Data Low-Byte as one 8-bit packet. 
-        //Wait for SPI Shift Register to complete TX of Register-Data Low-Byte.
-        //Read SSP2BUF to clear buffer. 
-        spiSendByte(WRT_DATA_LOW);                   
-
-        gpio_set_level(mcp_obj->gpio_num_cs, 1);            //Raise CS High on 8-bit HPC Curiosity --> Reset MCP3564 SPI Interface.
+        trans.length = 16;
+        trans.tx_data[0] = WRT_CMD;
+        trans.tx_data[1] = WRT_DATA_LOW;
+        spi_device_transmit(spi, &trans);
     } 
     else if (REG_ADDR == _SCAN_ || REG_ADDR == _TIMER_ || REG_ADDR == _OFFSETCAL_ || REG_ADDR == _GAINCAL_) 
     {
-        gpio_set_level(mcp_obj->gpio_num_cs, 0);            //Assert CS Low on 8-bit HPC Curiosity --> Enable MCP3564 SPI Interface.
-
-        //Transmit Write-CMD as one 8-bit packet.
-        //Wait for SPI Shift Register to complete TX of Write-CMD.
-        //Read SSP2BUF to retrieve MCP3564 STATUS-Byte.
-        g_status = spiSendByte(WRT_CMD);
-
-        //Transmit Register-Data Low-Byte as one 8-bit packet. 
-        //Wait for SPI Shift Register to complete TX of Register-Data Low-Byte.
-        //Read SSP2BUF to clear buffer. 
-        spiSendByte(WRT_DATA_UPPER);
-        
-        //Transmit Register-Data Low-Byte as one 8-bit packet. 
-        //Wait for SPI Shift Register to complete TX of Register-Data Low-Byte.
-        //Read SSP2BUF to clear buffer. 
-        spiSendByte(WRT_DATA_HIGH);
-        
-        //Transmit Register-Data Low-Byte as one 8-bit packet. 
-        //Wait for SPI Shift Register to complete TX of Register-Data Low-Byte.
-        //Read SSP2BUF to clear buffer. 
-        spiSendByte(WRT_DATA_LOW);
-
-        gpio_set_level(mcp_obj->gpio_num_cs, 1);            //Raise CS High on 8-bit HPC Curiosity --> Reset MCP3564 SPI Interface.
+        trans.length = 32;
+        trans.tx_data[0] = WRT_CMD;
+        trans.tx_data[1] = WRT_DATA_UPPER;
+        trans.tx_data[2] = WRT_DATA_HIGH;
+        trans.tx_data[3] = WRT_DATA_LOW;
+        spi_device_transmit(spi, &trans);
     }
 }
 
 static uint32_t readSingleRegister(MCP3564_t* mcp_obj, uint8_t RD_CMD)
 {
+    spi_transaction_t trans = {0};
+    trans.flags = SPI_TRANS_USE_TXDATA|SPI_TRANS_USE_RXDATA;
+
     uint32_t READ_VALUE = 0;
     uint8_t REG_ADDR;
 
     REG_ADDR = (RD_CMD & 0b00111100) >> 2;                  //Extract MCP3564 Register-Address for Write-CMD
 
     if (REG_ADDR == _CONFIG0_ || REG_ADDR == _CONFIG1_ || REG_ADDR == _CONFIG2_ || REG_ADDR == _CONFIG3_ || REG_ADDR == _IRQ_ || REG_ADDR == _MUX_ || REG_ADDR == _RESERVED_C_ || REG_ADDR == _LOCK_) 
-    {
-        gpio_set_level(mcp_obj->gpio_num_cs, 0);            //Assert CS Low on 8-bit HPC Curiosity --> Enable MCP3564 SPI Interface.
-
-        //Transmit Read-CMD as one 8-bit packet.
-        //Wait for SPI Shift Register to complete TX of Read-CMD.
-        //Read SSP2BUF to retrieve MCP3564 STATUS-Byte.
-        g_status = spiSendByte(RD_CMD);
-
-        //Transmit Register-Data Low-Byte as one 8-bit packet. 
-        //Wait for SPI Shift Register to complete RX of Register-Data Low-Byte.
-        //Read SSP2BUF to clear buffer. 
-        READ_VALUE = (uint32_t)spiSendByte(0x00);                   
-
-        gpio_set_level(mcp_obj->gpio_num_cs, 1);            //Raise CS High on 8-bit HPC Curiosity --> Reset MCP3564 SPI Interface.
+    {                  
+        trans.length = 16;
+        trans.tx_data[0] = RD_CMD;
+        trans.tx_data[1] = 0x00;
+        spi_device_transmit(spi, &trans);
+        READ_VALUE = (uint32_t)trans.rx_data[1];
     } 
     else if (REG_ADDR == _RESERVED_E_ || REG_ADDR == _CRCCFG_) 
     {
-        gpio_set_level(mcp_obj->gpio_num_cs, 0);            //Assert CS Low on 8-bit HPC Curiosity --> Enable MCP3564 SPI Interface.
-
-        //Transmit Read-CMD as one 8-bit packet.
-        //Wait for SPI Shift Register to complete TX of Read-CMD.
-        //Read SSP2BUF to retrieve MCP3564 STATUS-Byte.
-        g_status = spiSendByte(RD_CMD);
-
-        //Transmit Register-Data High-Byte as one 8-bit packet. 
-        //Wait for SPI Shift Register to complete RX of Register-Data High-Byte.
-        //Read SSP2BUF to clear buffer 
-        READ_VALUE = ((uint32_t)spiSendByte(0x00)) << 8;
-
-        //Transmit Register-Data Low-Byte as one 8-bit packet. 
-        //Wait for SPI Shift Register to complete RX of Register-Data High-Byte.
-        //Read SSP2BUF to clear buffer 
-        READ_VALUE |= (uint32_t)spiSendByte(0x00);
-
-        gpio_set_level(mcp_obj->gpio_num_cs, 1);            //Raise CS High on 8-bit HPC Curiosity --> Reset MCP3564 SPI Interface.
+        trans.length = 24;
+        trans.tx_data[0] = RD_CMD;
+        trans.tx_data[1] = 0x00;
+        trans.tx_data[2] = 0x00;
+        spi_device_transmit(spi, &trans);
+        READ_VALUE  = (uint32_t)trans.rx_data[1] << 8;
+        READ_VALUE |= (uint32_t)trans.rx_data[2];
     }
     else if (REG_ADDR == _ADCDATA_ || REG_ADDR == _SCAN_ || REG_ADDR == _TIMER_ || REG_ADDR == _OFFSETCAL_ || REG_ADDR == _GAINCAL_ || REG_ADDR == _RESERVED_B_) 
     {
-        gpio_set_level(mcp_obj->gpio_num_cs, 0);            //Assert CS Low on 8-bit HPC Curiosity --> Enable MCP3564 SPI Interface.
+        uint8_t snd_data[5] = {0x00};
+        snd_data[0] = RD_CMD;
+        uint8_t rcv_data[5] = {0x00};
+        trans.length = 8 * 5;
+        trans.flags = 0;
+        trans.tx_buffer = snd_data;
+        trans.rx_buffer = rcv_data;
+        spi_device_transmit(spi, &trans);
 
-        //Transmit Read-CMD as one 8-bit packet.
-        //Wait for SPI Shift Register to complete TX of Read-CMD.
-        //Read SSP2BUF to retrieve MCP3564 STATUS-Byte.
-        g_status = spiSendByte(RD_CMD);
-
-        //Transmit Register-Data High-Byte as one 8-bit packet. 
-        //Wait for SPI Shift Register to complete RX of Register-Data Upper-Byte.
-        //Read SSP2BUF to clear buffer 
-        READ_VALUE = ((uint32_t)spiSendByte(0x00)) << 24;
-
-        //Transmit Register-Data High-Byte as one 8-bit packet. 
-        //Wait for SPI Shift Register to complete RX of Register-Data Upper-Byte.
-        //Read SSP2BUF to clear buffer 
-        READ_VALUE |= ((uint32_t)spiSendByte(0x00)) << 16;
-
-        //Transmit Register-Data High-Byte as one 8-bit packet. 
-        //Wait for SPI Shift Register to complete RX of Register-Data High-Byte.
-        //Read SSP2BUF to clear buffer 
-        READ_VALUE |= ((uint32_t)spiSendByte(0x00)) << 8;
-
-        //Transmit Register-Data Low-Byte as one 8-bit packet. 
-        //Wait for SPI Shift Register to complete RX of Register-Data High-Byte.
-        //Read SSP2BUF to clear buffer 
-        READ_VALUE |= (uint32_t)spiSendByte(0x00);
-
-        gpio_set_level(mcp_obj->gpio_num_cs, 1);            //Raise CS High on 8-bit HPC Curiosity --> Reset MCP3564 SPI Interface.
+        READ_VALUE  = ((uint32_t)rcv_data[1]) << 24;
+        READ_VALUE |= ((uint32_t)rcv_data[2]) << 16;
+        READ_VALUE |= ((uint32_t)rcv_data[3]) << 8;
+        READ_VALUE |= ((uint32_t)rcv_data[4]);
     }
     return READ_VALUE;
 }
@@ -266,13 +195,7 @@ int32_t MCP3564_signExtend(uint32_t Bytes)
 
 void MCP3564_startUp(MCP3564_t* mcp_obj) 
 {
-    example_ledc_init(mcp_obj);
     init_spi(mcp_obj);
-
-    // Set CS as Output
-    esp_rom_gpio_pad_select_gpio(mcp_obj->gpio_num_cs);
-    gpio_set_direction(mcp_obj->gpio_num_cs, GPIO_MODE_OUTPUT);
-    gpio_set_level(mcp_obj->gpio_num_cs, 1);
 
     // First enable interrupts
     gpio_config_t gpio_cfg = {
@@ -287,37 +210,52 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
     gpio_install_isr_service(0);
     gpio_isr_handler_add(mcp_obj->gpio_num_ndrdy, GPIO_DRDY_IRQHandler, (void*)mcp_obj);
 
+    ESP_LOGI(TAG, "set MCP configs");
+
     //GAINCAL --> (8,253,056 / 8,388,607 = 1.615894%) Gain Error w/2.048V Input
-    writeSingleRegister(mcp_obj, ((_GAINCAL_ << 2) | _WRT_CTRL_), 0x7DEE80);     
+    writeSingleRegister(mcp_obj, ((_GAINCAL_ << 2) | _WRT_CTRL_), 0x800000);     
+    ESP_LOGI(TAG, "GAINCAL = %lx", readSingleRegister(mcp_obj, ((_GAINCAL_ << 2) | _RD_CTRL_)));
 
     //OFFSETCAL --> +62 Counts of Offset Cancellation (Measured Offset is Negative).
-    writeSingleRegister(mcp_obj, ((_OFFSETCAL_ << 2) | _WRT_CTRL_), 0x00003E);
+    writeSingleRegister(mcp_obj, ((_OFFSETCAL_ << 2) | _WRT_CTRL_), 0x000000);
+    ESP_LOGI(TAG, "OFFSETCAL = %lx", readSingleRegister(mcp_obj, ((_OFFSETCAL_ << 2) | _RD_CTRL_)));
 
     //TIMER --> Disabled.
     writeSingleRegister(mcp_obj, ((_TIMER_ << 2) | _WRT_CTRL_), 0x000000);
+    ESP_LOGI(TAG, "TIMER = %lx", readSingleRegister(mcp_obj, ((_TIMER_ << 2) | _RD_CTRL_)));
 
-    //SCAN --> Disabled.
-    writeSingleRegister(mcp_obj, ((_SCAN_ << 2) | _WRT_CTRL_), 0x0000FF);
+    //SCAN --> CH0 - CH5 --> ().
+    writeSingleRegister(mcp_obj, ((_SCAN_ << 2) | _WRT_CTRL_), 0x00003F);
+    ESP_LOGI(TAG, "SCAN = %lx", readSingleRegister(mcp_obj, ((_SCAN_ << 2) | _RD_CTRL_)));
 
     //MUX --> VIN+ = CH0, VIN- = CH1 --> (0b00000001).
     writeSingleRegister(mcp_obj, ((_MUX_ << 2) | _WRT_CTRL_), 0xBC);
+    ESP_LOGI(TAG, "MUX = %lx", readSingleRegister(mcp_obj, ((_MUX_ << 2) | _RD_CTRL_)));
 
-    //IRQ --> IRQ Mode = Low level active IRQ Output  --> (0b00000000).
+    //IRQ --> IRQ Mode = Low level active IRQ Output  --> (0b00000100).
     writeSingleRegister(mcp_obj, ((_IRQ_ << 2) | _WRT_CTRL_), 0x04);
+    ESP_LOGI(TAG, "IRQ = %lx", readSingleRegister(mcp_obj, ((_IRQ_ << 2) | _RD_CTRL_)));
 
     //CONFIG3 --> Conv. Mod = One-Shot Conv. Mode, FORMAT = 32b + chid,
     //CRC_FORMAT = 16b, CRC-COM = Disabled,
-    //OFFSETCAL = Enabled, GAINCAL = Enabled --> (0b10110011).
+    //OFFSETCAL = Enabled, GAINCAL = Enabled --> (0b10110011). 
     writeSingleRegister(mcp_obj, ((_CONFIG3_ << 2) | _WRT_CTRL_), 0xB3);
+    ESP_LOGI(TAG, "CONFIG3 = %lx", readSingleRegister(mcp_obj, ((_CONFIG3_ << 2) | _RD_CTRL_)));
     
     //CONFIG2 --> BOOST = 1x, GAIN = 1x, AZ_MUX = 0 --> (0b10001011).
     writeSingleRegister(mcp_obj, ((_CONFIG2_ << 2) | _WRT_CTRL_), 0x89);
+    ESP_LOGI(TAG, "CONFIG2 = %lx", readSingleRegister(mcp_obj, ((_CONFIG2_ << 2) | _RD_CTRL_)));
 
     //CONFIG1 --> AMCLK = MCLK, OSR = 256 --> (0b00001100).      
     writeSingleRegister(mcp_obj, ((_CONFIG1_ << 2) | _WRT_CTRL_), 0x0C);
+    ESP_LOGI(TAG, "CONFIG1 = %lx", readSingleRegister(mcp_obj, ((_CONFIG1_ << 2) | _RD_CTRL_)));
 
     //CONFIG0 --> VREF_SEL = extVOLT, CLK_SEL = extCLK, CS_SEL = No Bias, ADC_MODE = Standby Mode --> (0b00010010).
     writeSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _WRT_CTRL_), 0x12);
+    ESP_LOGI(TAG, "CONFIG0 = %lx", readSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _RD_CTRL_)));
+
+    ESP_LOGI(TAG, "Start MCLK");
+    example_ledc_init(mcp_obj);
 }
 
 void MCP3564_startConversion(MCP3564_t* mcp_obj)
@@ -332,12 +270,13 @@ uint32_t MCP3564_readVoltage(MCP3564_t* mcp_obj)
 
 uint32_t MCP3564_readChannels(MCP3564_t* mcp_obj, float* buffer)
 {
-    uint32_t timeout_us = 1000;
+    uint32_t timeout_us = 100;
     uint32_t time_us = 0;
     MCP3564_startConversion(mcp_obj);
+    uint32_t list[8] = {0};
 
     uint32_t column;
-    for(uint8_t i = 0; i < 8; i++)
+    for(uint8_t i = 0; i < 6; i++)
     {
         while(!mcp_obj->flag_drdy) 
         {
@@ -346,6 +285,7 @@ uint32_t MCP3564_readChannels(MCP3564_t* mcp_obj, float* buffer)
         }
         
         uint32_t readV = MCP3564_readVoltage(mcp_obj);
+        list[i] = readV;
         if(readV)
         {
             column = ((readV & 0xF0000000) >> 7 * 4);
@@ -353,6 +293,11 @@ uint32_t MCP3564_readChannels(MCP3564_t* mcp_obj, float* buffer)
         }
         mcp_obj->flag_drdy = 0;             //Data-Ready Flag via MCP3564 IRQ Alert.
     }
+
+    for(uint8_t i = 0; i < 6; i++) {
+        printf("%lX\t", list[i]);
+    }
+    printf("\n");
 
     return 0;
 }
