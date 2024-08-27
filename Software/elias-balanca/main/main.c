@@ -50,10 +50,10 @@ void monitor_task(void* p)
 
             MCP3564_readChannels(&MCP_instance, volts);
 
-            printf("VOLTS\n");
-            for (uint8_t i = 0; i < 8; i++) {
-                printf("%d = %f\n", i, volts[i]);
-            }
+            // printf("VOLTS\n");
+            // for (uint8_t i = 0; i < 8; i++) {
+            //     printf("%d = %f\n", i, volts[i]);
+            // }
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -78,7 +78,7 @@ void app_main(void)
 
     vTaskDelay(pdMS_TO_TICKS(1000));
     printf("Start Conv\n");
-    MCP3564_startConversion(&MCP_instance);
+    // MCP3564_startConversion(&MCP_instance);
 
-    xTaskCreatePinnedToCore(monitor_task, "monitor", 2048, NULL, 5, NULL, APP_CPU_NUM);
+    xTaskCreatePinnedToCore(monitor_task, "monitor", 2048*4, NULL, 5, NULL, APP_CPU_NUM);
 }

@@ -29,13 +29,14 @@
 #define _WRT_CTRL_ 0b01000010               //MCP3564 Write-CMD Command-Byte.
 #define _RD_CTRL_  0b01000001               //MCP3564 Read-CMD Command-Byte.
 
-#define nPOR_STATUS     BIT0
-#define nCRCCFG_STATUS  BIT1
+#define SPI_DMA_BUF_SIZE        5
 
 #define LEDC_DUTY               (1) // Set duty to 50%. (2 ** 1) * 50% = 4096
 #define LEDC_FREQUENCY          (12000000) // Frequency in Hertz. Set frequency at 4 kHz
 
 static spi_device_handle_t spi;
+static uint8_t* rcv_data;
+void MCP3564_spiHandle(void* p);
 
 static void IRAM_ATTR GPIO_DRDY_IRQHandler(void* arg)
 {
@@ -95,7 +96,7 @@ static void init_spi(MCP3564_t* mcp_obj)
         .clock_speed_hz = SPI_CLOCK_SPEED,  // 1 MHz clock speed
         .spics_io_num = mcp_obj->gpio_num_cs,
         .flags = 0,
-        .queue_size = 16,
+        .queue_size = 32,
         .pre_cb = NULL,
         .post_cb = NULL
     };
@@ -239,7 +240,7 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
     //CONFIG3 --> Conv. Mod = One-Shot Conv. Mode, FORMAT = 32b + chid,
     //CRC_FORMAT = 16b, CRC-COM = Disabled,
     //OFFSETCAL = Enabled, GAINCAL = Enabled --> (0b10110011). 
-    writeSingleRegister(mcp_obj, ((_CONFIG3_ << 2) | _WRT_CTRL_), 0xB3);
+    writeSingleRegister(mcp_obj, ((_CONFIG3_ << 2) | _WRT_CTRL_), 0xF3);
     ESP_LOGI(TAG, "CONFIG3 = %lx", readSingleRegister(mcp_obj, ((_CONFIG3_ << 2) | _RD_CTRL_)));
     
     //CONFIG2 --> BOOST = 1x, GAIN = 1x, AZ_MUX = 0 --> (0b10001011).
@@ -251,11 +252,13 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
     ESP_LOGI(TAG, "CONFIG1 = %lx", readSingleRegister(mcp_obj, ((_CONFIG1_ << 2) | _RD_CTRL_)));
 
     //CONFIG0 --> VREF_SEL = extVOLT, CLK_SEL = extCLK, CS_SEL = No Bias, ADC_MODE = Standby Mode --> (0b00010010).
-    writeSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _WRT_CTRL_), 0x12);
+    writeSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _WRT_CTRL_), 0x13);
     ESP_LOGI(TAG, "CONFIG0 = %lx", readSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _RD_CTRL_)));
 
     ESP_LOGI(TAG, "Start MCLK");
     example_ledc_init(mcp_obj);
+
+    xTaskCreatePinnedToCore(MCP3564_spiHandle, "MCP3564_spiHandle", 2048*4, NULL, 3, NULL, PRO_CPU_NUM);
 }
 
 void MCP3564_startConversion(MCP3564_t* mcp_obj)
@@ -263,41 +266,67 @@ void MCP3564_startConversion(MCP3564_t* mcp_obj)
     writeSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _WRT_CTRL_), 0x13);
 }
 
-uint32_t MCP3564_readVoltage(MCP3564_t* mcp_obj)
-{
-    return readSingleRegister(mcp_obj, (_ADCDATA_ << 2) | _RD_CTRL_);
-}
-
 uint32_t MCP3564_readChannels(MCP3564_t* mcp_obj, float* buffer)
 {
     uint32_t timeout_us = 100;
     uint32_t time_us = 0;
-    MCP3564_startConversion(mcp_obj);
-    uint32_t list[8] = {0};
+    // MCP3564_startConversion(mcp_obj);
 
-    uint32_t column;
+    const uint8_t RD_CMD = (_ADCDATA_ << 2) | _RD_CTRL_;
+    const uint8_t snd_data[5] = {RD_CMD, 0x00, 0x00, 0x00, 0x00};
+    rcv_data = (uint8_t*)heap_caps_calloc(1, SPI_DMA_BUF_SIZE, MALLOC_CAP_DMA);
+
+    spi_transaction_t trans = {
+        .length = SPI_DMA_BUF_SIZE* 8,
+        .tx_buffer = snd_data,
+        .rx_buffer = rcv_data
+    };
+
     for(uint8_t i = 0; i < 6; i++)
     {
-        while(!mcp_obj->flag_drdy) 
+        while(!mcp_obj->flag_drdy)
         {
-            esp_rom_delay_us(50);//vTaskDelay(1); // To do: add timeout
-            if(time_us+=50 >= timeout_us) return 1;
+            esp_rom_delay_us(30);//vTaskDelay(1); // To do: add timeout
+            if(time_us+=30 >= timeout_us) return 1;
         }
-        
-        uint32_t readV = MCP3564_readVoltage(mcp_obj);
-        list[i] = readV;
-        if(readV)
+
+        esp_err_t err = spi_device_queue_trans(spi, &trans, portMAX_DELAY);
+        esp_rom_delay_us(30);
+        if(err != ESP_OK)
         {
-            column = ((readV & 0xF0000000) >> 7 * 4);
-            buffer[column] = (float)MCP3564_signExtend(readV) * 3.3/8388608.0;
+            printf("%d: %s\n", i, esp_err_to_name(err));
         }
         mcp_obj->flag_drdy = 0;             //Data-Ready Flag via MCP3564 IRQ Alert.
     }
 
-    for(uint8_t i = 0; i < 6; i++) {
-        printf("%lX\t", list[i]);
-    }
-    printf("\n");
-
     return 0;
+}
+
+void MCP3564_spiHandle(void *p)
+{
+    uint32_t readV;
+    uint8_t column = 0;
+    uint32_t list[8] = {0};
+
+    while (1)
+    {
+        spi_transaction_t* rx_trans;
+        esp_err_t err = spi_device_get_trans_result(spi, &rx_trans, portMAX_DELAY);
+        if(err == ESP_OK)
+        {
+            readV  = (uint32_t)rcv_data[1] << 24;
+            readV |= (uint32_t)rcv_data[2] << 16;
+            readV |= (uint32_t)rcv_data[3] << 8;
+            readV |= (uint32_t)rcv_data[4];
+
+            column = ((readV & 0xF0000000) >> 7 * 4);
+
+            list[column] = readV;
+
+            printf("%i: %08lX\n", column, list[column]);
+        } else {
+            printf("get error: %s\n", esp_err_to_name(err));
+        }
+    }
+    
 }

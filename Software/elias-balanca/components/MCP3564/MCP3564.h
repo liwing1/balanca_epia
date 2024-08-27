@@ -31,7 +31,6 @@ typedef struct{
 
 void MCP3564_startUp(MCP3564_t* mcp_obj);
 void MCP3564_startConversion(MCP3564_t* mcp_obj);
-uint32_t MCP3564_readVoltage(MCP3564_t* mcp_obj);
 uint32_t MCP3564_readChannels(MCP3564_t* mcp_obj, float* buffer);
 int32_t MCP3564_signExtend(uint32_t Bytes);
 
