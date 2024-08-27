@@ -37,19 +37,18 @@ MCP3564_t MCP_instance = {
     .buffer = {0}
 };
 
+
 void monitor_task(void* p)
 {
     while(1)
-    {
-        // printf("freq = %ld\n", MCP_instance.flag_drdy);
-        // MCP_instance.flag_drdy = 0;
-        
-        printf("%08lX, %08lX, %08lX, %08lX, %08lX, %08lX\n",
-            MCP_instance.buffer[0], MCP_instance.buffer[1],
+    {   
+        printf("%ld, %08lX, %08lX, %08lX, %08lX, %08lX, %08lX\n",
+            MCP_instance.flag_drdy, MCP_instance.buffer[0], MCP_instance.buffer[1],
             MCP_instance.buffer[2], MCP_instance.buffer[3], 
             MCP_instance.buffer[4], MCP_instance.buffer[5]
         );
         
+        MCP_instance.flag_drdy = 0;
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
@@ -71,7 +70,6 @@ void app_main(void)
     semphr = xSemaphoreCreateBinary();
     ESP_ERROR_CHECK(esp_async_memcpy_install(&config, &driver)); // install driver with default DMA engine
 
-    vTaskDelay(pdMS_TO_TICKS(1000));
     printf("Start Conv\n");
     // MCP3564_startConversion(&MCP_instance);
 

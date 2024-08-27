@@ -38,7 +38,7 @@ static spi_device_handle_t spi;
 static const uint8_t snd_data[5] = {(_ADCDATA_ << 2) | _RD_CTRL_, 0x00, 0x00, 0x00, 0x00};
 static uint8_t* rcv_data;
 static spi_transaction_t adc_trans = {
-    .length = SPI_DMA_BUF_SIZE*8,
+    .length = 5*8,
     .tx_buffer = snd_data
 };
 
@@ -104,7 +104,7 @@ static void init_spi(MCP3564_t* mcp_obj)
         .clock_speed_hz = SPI_CLOCK_SPEED,  // 1 MHz clock speed
         .spics_io_num = mcp_obj->gpio_num_cs,
         .flags = 0,
-        .queue_size = 32,
+        .queue_size = 256,
         .pre_cb = NULL,
         .post_cb = NULL
     };
@@ -243,7 +243,7 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
     ESP_LOGI(TAG, "CONFIG2 = %lx", readSingleRegister(mcp_obj, ((_CONFIG2_ << 2) | _RD_CTRL_)));
 
     //CONFIG1 --> AMCLK = MCLK, OSR = 256 --> (0b00001100).      
-    writeSingleRegister(mcp_obj, ((_CONFIG1_ << 2) | _WRT_CTRL_), 0x0C);
+    writeSingleRegister(mcp_obj, ((_CONFIG1_ << 2) | _WRT_CTRL_), 0x04);
     ESP_LOGI(TAG, "CONFIG1 = %lx", readSingleRegister(mcp_obj, ((_CONFIG1_ << 2) | _RD_CTRL_)));
 
     //CONFIG0 --> VREF_SEL = extVOLT, CLK_SEL = extCLK, CS_SEL = No Bias, ADC_MODE = Standby Mode --> (0b00010010).
@@ -251,10 +251,10 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
     ESP_LOGI(TAG, "CONFIG0 = %lx", readSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _RD_CTRL_)));
 
 
-    rcv_data = (uint8_t*)heap_caps_calloc(1, SPI_DMA_BUF_SIZE, MALLOC_CAP_DMA);
+    rcv_data = (uint8_t*)heap_caps_calloc(1, SPI_DMA_BUF_SIZE*100, MALLOC_CAP_DMA);
     adc_trans.rx_buffer = rcv_data;
 
-    xTaskCreatePinnedToCore(MCP3564_spiHandle, "MCP3564_spiHandle", 2048*4, (void*)mcp_obj, configMAX_PRIORITIES-1, NULL, PRO_CPU_NUM);
+    xTaskCreatePinnedToCore(MCP3564_spiHandle, "MCP3564_spiHandle", 2048*4, (void*)mcp_obj, configMAX_PRIORITIES-1, NULL, APP_CPU_NUM);
 
     gpio_config_t gpio_cfg = {
         .pin_bit_mask = 1 << mcp_obj->gpio_num_ndrdy,
@@ -277,12 +277,11 @@ void MCP3564_spiHandle(void *p)
     uint32_t readV;
     uint8_t column = 0;
     MCP3564_t* mcp_obj = (MCP3564_t*)p;
+    spi_transaction_t* rx_trans;
 
     while (1)
     {
-        spi_transaction_t* rx_trans;
-        esp_err_t err = spi_device_get_trans_result(spi, &rx_trans, pdMS_TO_TICKS(1000));
-        if(err == ESP_OK)
+        while(spi_device_get_trans_result(spi, &rx_trans, pdMS_TO_TICKS(1000)) == ESP_OK)
         {
             readV  = (uint32_t)rcv_data[1] << 24;
             readV |= (uint32_t)rcv_data[2] << 16;
@@ -292,9 +291,6 @@ void MCP3564_spiHandle(void *p)
             column = ((readV & 0xF0000000) >> 7 * 4);
 
             mcp_obj->buffer[column] = readV;
-        } else {
-            printf("get error: %s\n", esp_err_to_name(err));
         }
     }
-    
 }
