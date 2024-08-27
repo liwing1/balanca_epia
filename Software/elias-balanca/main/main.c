@@ -16,7 +16,6 @@
 SemaphoreHandle_t semphr;
 async_memcpy_config_t config = ASYNC_MEMCPY_DEFAULT_CONFIG();
 async_memcpy_handle_t driver = NULL;
-uint32_t buffer[MCP3564_BUFFER_SIZE] = {0};
 
 // Callback implementation, running in ISR context
 static bool my_async_memcpy_cb(async_memcpy_handle_t mcp_hdl, async_memcpy_event_t *event, void *cb_args)
@@ -40,22 +39,18 @@ MCP3564_t MCP_instance = {
 
 void monitor_task(void* p)
 {
-    float volts[8] = {0};
-
     while(1)
     {
-        if(gpio_get_level(BUTTON_PIN) == 0)
-        {
-            vTaskDelay(pdMS_TO_TICKS(100));
-
-            MCP3564_readChannels(&MCP_instance, volts);
-
-            // printf("VOLTS\n");
-            // for (uint8_t i = 0; i < 8; i++) {
-            //     printf("%d = %f\n", i, volts[i]);
-            // }
-        }
-        vTaskDelay(pdMS_TO_TICKS(100));
+        // printf("freq = %ld\n", MCP_instance.flag_drdy);
+        // MCP_instance.flag_drdy = 0;
+        
+        printf("%08lX, %08lX, %08lX, %08lX, %08lX, %08lX\n",
+            MCP_instance.buffer[0], MCP_instance.buffer[1],
+            MCP_instance.buffer[2], MCP_instance.buffer[3], 
+            MCP_instance.buffer[4], MCP_instance.buffer[5]
+        );
+        
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 

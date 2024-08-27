@@ -32,16 +32,24 @@
 #define SPI_DMA_BUF_SIZE        5
 
 #define LEDC_DUTY               (1) // Set duty to 50%. (2 ** 1) * 50% = 4096
-#define LEDC_FREQUENCY          (12000000) // Frequency in Hertz. Set frequency at 4 kHz
+#define LEDC_FREQUENCY          (19660800) // Frequency in Hertz. Set frequency at 4 kHz
 
 static spi_device_handle_t spi;
+static const uint8_t snd_data[5] = {(_ADCDATA_ << 2) | _RD_CTRL_, 0x00, 0x00, 0x00, 0x00};
 static uint8_t* rcv_data;
+static spi_transaction_t adc_trans = {
+    .length = SPI_DMA_BUF_SIZE*8,
+    .tx_buffer = snd_data
+};
+
 void MCP3564_spiHandle(void* p);
 
 static void IRAM_ATTR GPIO_DRDY_IRQHandler(void* arg)
 {
     uint32_t gpio_num = ((MCP3564_t*)arg)->gpio_num_ndrdy;
     if(gpio_num) ((MCP3564_t*)arg)->flag_drdy++;
+
+    spi_device_queue_trans(spi, &adc_trans, portMAX_DELAY);
 }
 
 static void example_ledc_init(MCP3564_t* mcp_obj)
@@ -198,19 +206,6 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
 {
     init_spi(mcp_obj);
 
-    // First enable interrupts
-    gpio_config_t gpio_cfg = {
-        .pin_bit_mask = 1 << mcp_obj->gpio_num_ndrdy,
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_NEGEDGE
-    };
-    gpio_config(&gpio_cfg);
-
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(mcp_obj->gpio_num_ndrdy, GPIO_DRDY_IRQHandler, (void*)mcp_obj);
-
     ESP_LOGI(TAG, "set MCP configs");
 
     //GAINCAL --> (8,253,056 / 8,388,607 = 1.615894%) Gain Error w/2.048V Input
@@ -255,63 +250,38 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
     writeSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _WRT_CTRL_), 0x13);
     ESP_LOGI(TAG, "CONFIG0 = %lx", readSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _RD_CTRL_)));
 
+
+    rcv_data = (uint8_t*)heap_caps_calloc(1, SPI_DMA_BUF_SIZE, MALLOC_CAP_DMA);
+    adc_trans.rx_buffer = rcv_data;
+
+    xTaskCreatePinnedToCore(MCP3564_spiHandle, "MCP3564_spiHandle", 2048*4, (void*)mcp_obj, configMAX_PRIORITIES-1, NULL, PRO_CPU_NUM);
+
+    gpio_config_t gpio_cfg = {
+        .pin_bit_mask = 1 << mcp_obj->gpio_num_ndrdy,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_NEGEDGE
+    };
+    gpio_config(&gpio_cfg);
+
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(mcp_obj->gpio_num_ndrdy, GPIO_DRDY_IRQHandler, (void*)mcp_obj);
+
     ESP_LOGI(TAG, "Start MCLK");
     example_ledc_init(mcp_obj);
-
-    xTaskCreatePinnedToCore(MCP3564_spiHandle, "MCP3564_spiHandle", 2048*4, NULL, 3, NULL, PRO_CPU_NUM);
-}
-
-void MCP3564_startConversion(MCP3564_t* mcp_obj)
-{
-    writeSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _WRT_CTRL_), 0x13);
-}
-
-uint32_t MCP3564_readChannels(MCP3564_t* mcp_obj, float* buffer)
-{
-    uint32_t timeout_us = 100;
-    uint32_t time_us = 0;
-    // MCP3564_startConversion(mcp_obj);
-
-    const uint8_t RD_CMD = (_ADCDATA_ << 2) | _RD_CTRL_;
-    const uint8_t snd_data[5] = {RD_CMD, 0x00, 0x00, 0x00, 0x00};
-    rcv_data = (uint8_t*)heap_caps_calloc(1, SPI_DMA_BUF_SIZE, MALLOC_CAP_DMA);
-
-    spi_transaction_t trans = {
-        .length = SPI_DMA_BUF_SIZE* 8,
-        .tx_buffer = snd_data,
-        .rx_buffer = rcv_data
-    };
-
-    for(uint8_t i = 0; i < 6; i++)
-    {
-        while(!mcp_obj->flag_drdy)
-        {
-            esp_rom_delay_us(30);//vTaskDelay(1); // To do: add timeout
-            if(time_us+=30 >= timeout_us) return 1;
-        }
-
-        esp_err_t err = spi_device_queue_trans(spi, &trans, portMAX_DELAY);
-        esp_rom_delay_us(30);
-        if(err != ESP_OK)
-        {
-            printf("%d: %s\n", i, esp_err_to_name(err));
-        }
-        mcp_obj->flag_drdy = 0;             //Data-Ready Flag via MCP3564 IRQ Alert.
-    }
-
-    return 0;
 }
 
 void MCP3564_spiHandle(void *p)
 {
     uint32_t readV;
     uint8_t column = 0;
-    uint32_t list[8] = {0};
+    MCP3564_t* mcp_obj = (MCP3564_t*)p;
 
     while (1)
     {
         spi_transaction_t* rx_trans;
-        esp_err_t err = spi_device_get_trans_result(spi, &rx_trans, portMAX_DELAY);
+        esp_err_t err = spi_device_get_trans_result(spi, &rx_trans, pdMS_TO_TICKS(1000));
         if(err == ESP_OK)
         {
             readV  = (uint32_t)rcv_data[1] << 24;
@@ -321,9 +291,7 @@ void MCP3564_spiHandle(void *p)
 
             column = ((readV & 0xF0000000) >> 7 * 4);
 
-            list[column] = readV;
-
-            printf("%i: %08lX\n", column, list[column]);
+            mcp_obj->buffer[column] = readV;
         } else {
             printf("get error: %s\n", esp_err_to_name(err));
         }
