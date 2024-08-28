@@ -9,6 +9,9 @@ extern "C" {
 
 // Custom macros
 #define SPI_CLOCK_SPEED 20000000 // 20 MHz
+#define N_CHANNELS      6
+#define N_SAMPLES       (1<<16) // 16384
+#define N_SAMPLES_MASK  N_SAMPLES-1
 
 typedef struct{
     // Pin mapping
@@ -23,11 +26,14 @@ typedef struct{
     uint32_t flag_drdy;
 
     // history
-    uint32_t buffer[8];
+    uint32_t* history[N_CHANNELS];
+
 } MCP3564_t;
 
 void MCP3564_startUp(MCP3564_t* mcp_obj);
 int32_t MCP3564_signExtend(uint32_t Bytes);
+
+extern uint32_t freq;
 
 #ifdef __cplusplus
 }

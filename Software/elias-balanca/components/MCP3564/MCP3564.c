@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/spi_master.h"
@@ -29,11 +30,24 @@
 #define _WRT_CTRL_ 0b01000010               //MCP3564 Write-CMD Command-Byte.
 #define _RD_CTRL_  0b01000001               //MCP3564 Read-CMD Command-Byte.
 
-#define SPI_DMA_BUF_SIZE        5
-
 #define LEDC_DUTY               (1) // Set duty to 50%. (2 ** 1) * 50% = 4096
 #define LEDC_FREQUENCY          (19660800) // Frequency in Hertz. Set frequency at 4 kHz
 
+typedef union{
+    uint8_t bytes[5];
+    struct{
+        uint8_t status;
+        uint8_t sign:4;
+        uint8_t channel:4;
+        uint8_t upper;
+        uint8_t high;
+        uint8_t low;
+    };
+} adc_format_t;
+
+uint32_t freq = 0;
+
+static TaskHandle_t task_handle;
 static spi_device_handle_t spi;
 static const uint8_t snd_data[5] = {(_ADCDATA_ << 2) | _RD_CTRL_, 0x00, 0x00, 0x00, 0x00};
 static uint8_t* rcv_data;
@@ -42,13 +56,13 @@ static spi_transaction_t adc_trans = {
     .tx_buffer = snd_data
 };
 
+EXT_RAM_BSS_ATTR uint32_t history[N_SAMPLES][N_CHANNELS];
+
 void MCP3564_spiHandle(void* p);
+void test_task(void* p);
 
 static void IRAM_ATTR GPIO_DRDY_IRQHandler(void* arg)
 {
-    uint32_t gpio_num = ((MCP3564_t*)arg)->gpio_num_ndrdy;
-    if(gpio_num) ((MCP3564_t*)arg)->flag_drdy++;
-
     spi_device_queue_trans(spi, &adc_trans, portMAX_DELAY);
 }
 
@@ -194,17 +208,10 @@ static uint32_t readSingleRegister(MCP3564_t* mcp_obj, uint8_t RD_CMD)
     return READ_VALUE;
 }
 
-int32_t MCP3564_signExtend(uint32_t Bytes)
-{
-    int32_t signByte    = ((int32_t) (Bytes & 0x0F000000));
-    int32_t dataBytes   = ((int32_t) (Bytes & 0x00FFFFFF));
-
-    return ((signByte<<4) | signByte | dataBytes);
-}
-
 void MCP3564_startUp(MCP3564_t* mcp_obj) 
 {
     init_spi(mcp_obj);
+    *mcp_obj->history = (uint32_t*)&history;
 
     ESP_LOGI(TAG, "set MCP configs");
 
@@ -250,11 +257,10 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
     writeSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _WRT_CTRL_), 0x13);
     ESP_LOGI(TAG, "CONFIG0 = %lx", readSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _RD_CTRL_)));
 
-
-    rcv_data = (uint8_t*)heap_caps_calloc(1, SPI_DMA_BUF_SIZE*100, MALLOC_CAP_DMA);
+    rcv_data = (uint8_t*)heap_caps_calloc(1, 5, MALLOC_CAP_DMA);
     adc_trans.rx_buffer = rcv_data;
 
-    xTaskCreatePinnedToCore(MCP3564_spiHandle, "MCP3564_spiHandle", 2048*4, (void*)mcp_obj, configMAX_PRIORITIES-1, NULL, APP_CPU_NUM);
+    xTaskCreatePinnedToCore(MCP3564_spiHandle, "MCP3564_spiHandle", 2048*4, (void*)mcp_obj, configMAX_PRIORITIES-1, &task_handle, APP_CPU_NUM);
 
     gpio_config_t gpio_cfg = {
         .pin_bit_mask = 1 << mcp_obj->gpio_num_ndrdy,
@@ -272,25 +278,36 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
     example_ledc_init(mcp_obj);
 }
 
+bool is_row_filled(uint32_t* row, size_t row_size) {
+    for(size_t i = 0; i < row_size; i++) {
+        if(row[i] == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void MCP3564_spiHandle(void *p)
 {
-    uint32_t readV;
-    uint8_t column = 0;
+    adc_format_t* format = (adc_format_t*)rcv_data;
     MCP3564_t* mcp_obj = (MCP3564_t*)p;
     spi_transaction_t* rx_trans;
 
     while (1)
     {
-        while(spi_device_get_trans_result(spi, &rx_trans, pdMS_TO_TICKS(1000)) == ESP_OK)
+        while(spi_device_get_trans_result(spi, &rx_trans, portMAX_DELAY) == ESP_OK)
         {
-            readV  = (uint32_t)rcv_data[1] << 24;
-            readV |= (uint32_t)rcv_data[2] << 16;
-            readV |= (uint32_t)rcv_data[3] << 8;
-            readV |= (uint32_t)rcv_data[4];
+            history[mcp_obj->flag_drdy][format->channel] = \
+            ((uint32_t)format->sign   << 4 | (uint32_t)format->sign) << 24 | \
+            ((uint32_t)format->upper) << 16| \
+            ((uint32_t)format->high)  << 8 | \
+            ((uint32_t)format->low);
 
-            column = ((readV & 0xF0000000) >> 7 * 4);
+            freq++;
 
-            mcp_obj->buffer[column] = readV;
+            if(is_row_filled(history[mcp_obj->flag_drdy], N_CHANNELS)) {
+                mcp_obj->flag_drdy = (mcp_obj->flag_drdy + 1) & (N_SAMPLES);
+            }
         }
     }
 }
