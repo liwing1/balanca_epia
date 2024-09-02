@@ -55,5 +55,5 @@ void app_main(void)
     printf("Start Conv\n");
     // MCP3564_startConversion(&MCP_instance);
 
-    xTaskCreatePinnedToCore(monitor_task, "monitor", 2048*4, NULL, 5, NULL, APP_CPU_NUM);
+    xTaskCreatePinnedToCore(monitor_task, "monitor", 2048*4, NULL, 5, NULL, PRO_CPU_NUM);
 }

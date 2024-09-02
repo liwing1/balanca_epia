@@ -10,7 +10,7 @@ extern "C" {
 // Custom macros
 #define SPI_CLOCK_SPEED 20000000 // 20 MHz
 #define N_CHANNELS      6
-#define N_SAMPLES       (1<<16) // 16384
+#define N_SAMPLES       (1<<8) // 16384
 #define N_SAMPLES_MASK  N_SAMPLES-1
 
 typedef struct{

@@ -7,6 +7,11 @@
 #include "esp_log.h"
 #include "MCP3564.h"
 
+#include "soc/spi_struct.h"   // Include the SPI hardware register structures
+#include "soc/spi_reg.h"      // Include the SPI hardware register definitions
+#include "soc/gpio_sig_map.h"
+#include "driver/gpio.h"
+
 #define TAG "MCP3564"
 /************************* MCP3564 REGISTER DEFS ******************************/
 
@@ -31,7 +36,7 @@
 #define _RD_CTRL_  0b01000001               //MCP3564 Read-CMD Command-Byte.
 
 #define LEDC_DUTY               (1) // Set duty to 50%. (2 ** 1) * 50% = 4096
-#define LEDC_FREQUENCY          (19660800) // Frequency in Hertz. Set frequency at 4 kHz
+#define LEDC_FREQUENCY          (20000000) // Frequency in Hertz. Set frequency at 4 kHz
 
 typedef union{
     uint8_t bytes[5];
@@ -51,10 +56,7 @@ static TaskHandle_t task_handle;
 static spi_device_handle_t spi;
 static const uint8_t snd_data[5] = {(_ADCDATA_ << 2) | _RD_CTRL_, 0x00, 0x00, 0x00, 0x00};
 static uint8_t* rcv_data;
-static spi_transaction_t adc_trans = {
-    .length = 5*8,
-    .tx_buffer = snd_data
-};
+static spi_transaction_t adc_trans = {0};
 
 EXT_RAM_BSS_ATTR uint32_t history[N_SAMPLES][N_CHANNELS];
 
@@ -63,7 +65,14 @@ void test_task(void* p);
 
 static void IRAM_ATTR GPIO_DRDY_IRQHandler(void* arg)
 {
-    spi_device_queue_trans(spi, &adc_trans, portMAX_DELAY);
+    // Notify that ADC data is ready
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    xTaskNotifyFromISR(task_handle, 0, eNoAction, &xHigherPriorityTaskWoken);
+
+    // Yield to higher priority task if necessary
+    if (xHigherPriorityTaskWoken) {
+        portYIELD_FROM_ISR();
+    }
 }
 
 static void example_ledc_init(MCP3564_t* mcp_obj)
@@ -114,7 +123,7 @@ static void init_spi(MCP3564_t* mcp_obj)
         .mode = 0,  // can either be spi mode 0,0 or 1,1
         .duty_cycle_pos = 0,
         .cs_ena_pretrans = 0,
-        .cs_ena_posttrans = 0,
+        .cs_ena_posttrans = 10,
         .clock_speed_hz = SPI_CLOCK_SPEED,  // 1 MHz clock speed
         .spics_io_num = mcp_obj->gpio_num_cs,
         .flags = 0,
@@ -250,15 +259,19 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
     ESP_LOGI(TAG, "CONFIG2 = %lx", readSingleRegister(mcp_obj, ((_CONFIG2_ << 2) | _RD_CTRL_)));
 
     //CONFIG1 --> AMCLK = MCLK, OSR = 256 --> (0b00001100).      
-    writeSingleRegister(mcp_obj, ((_CONFIG1_ << 2) | _WRT_CTRL_), 0x04);
+    writeSingleRegister(mcp_obj, ((_CONFIG1_ << 2) | _WRT_CTRL_), 0x00);
     ESP_LOGI(TAG, "CONFIG1 = %lx", readSingleRegister(mcp_obj, ((_CONFIG1_ << 2) | _RD_CTRL_)));
 
     //CONFIG0 --> VREF_SEL = extVOLT, CLK_SEL = extCLK, CS_SEL = No Bias, ADC_MODE = Standby Mode --> (0b00010010).
     writeSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _WRT_CTRL_), 0x13);
     ESP_LOGI(TAG, "CONFIG0 = %lx", readSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _RD_CTRL_)));
 
+    // rcv_data = (uint8_t*)heap_caps_calloc(1, 5, MALLOC_CAP_DMA);
+    // adc_trans.rx_buffer = rcv_data;
     rcv_data = (uint8_t*)heap_caps_calloc(1, 5, MALLOC_CAP_DMA);
     adc_trans.rx_buffer = rcv_data;
+    adc_trans.tx_buffer = snd_data;
+    adc_trans.length = 8*5;
 
     xTaskCreatePinnedToCore(MCP3564_spiHandle, "MCP3564_spiHandle", 2048*4, (void*)mcp_obj, configMAX_PRIORITIES-1, &task_handle, APP_CPU_NUM);
 
@@ -289,14 +302,21 @@ bool is_row_filled(uint32_t* row, size_t row_size) {
 
 void MCP3564_spiHandle(void *p)
 {
-    adc_format_t* format = (adc_format_t*)rcv_data;
+    adc_format_t* format;
     MCP3564_t* mcp_obj = (MCP3564_t*)p;
     spi_transaction_t* rx_trans;
 
     while (1)
     {
-        while(spi_device_get_trans_result(spi, &rx_trans, portMAX_DELAY) == ESP_OK)
+        // Wait for notification from ISR
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        spi_device_queue_trans(spi, &adc_trans, portMAX_DELAY);
+
+        while(spi_device_get_trans_result(spi, &rx_trans, 0) == ESP_OK)
         {
+            format = (adc_format_t*)rcv_data;
+
             history[mcp_obj->flag_drdy][format->channel] = \
             ((uint32_t)format->sign   << 4 | (uint32_t)format->sign) << 24 | \
             ((uint32_t)format->upper) << 16| \
