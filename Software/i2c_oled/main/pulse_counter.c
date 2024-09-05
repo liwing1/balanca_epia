@@ -44,9 +44,9 @@ void pulse_counter_handler_a(void* p)
             freq_khz_a = (double)(((double)EXAMPLE_PCNT_HIGH_LIMIT/(double)event_count)*1e3);
             // ESP_LOGI(TAG, "Watch point event, f = %lf Hz", f*10e6);
 
-            printf("%lf, %lf\n", (double)freq_khz_a, (double)freq_khz_b);
+            // printf("%lf, %lf\n", (double)freq_khz_a, (double)freq_khz_b);
         } else {
-            ESP_LOGI(TAG, "Timeout pulse count A");
+            // ESP_LOGI(TAG, "Timeout pulse count A");
         }
     }
 }
@@ -64,7 +64,7 @@ void pulse_counter_handler_b(void* p)
 
             // printf("%lf\n", (double)freq_khz_b);
         } else {
-            ESP_LOGI(TAG, "Timeout pulse count B");
+            // ESP_LOGI(TAG, "Timeout pulse count B");
         }
     }
 }
@@ -194,9 +194,9 @@ void pulse_counter_start(void)
         "pulse_counter_handler_b", 
         2048*2, 
         NULL, 
-        configMAX_PRIORITIES-2, 
+        configMAX_PRIORITIES-4, 
         NULL,
-        APP_CPU_NUM
+        PRO_CPU_NUM
     );
 }
 

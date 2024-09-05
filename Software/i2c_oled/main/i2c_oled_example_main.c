@@ -16,7 +16,20 @@
 #include "lvgl.h"
 #include "esp_lcd_panel_vendor.h"
 
-static const char *TAG = "example";
+#include "MCP3564.h"
+
+static const char *TAG = "example";\
+static double history_f[N_SAMPLES] = {0};
+
+MCP3564_t MCP_instance = {
+    .gpio_num_pwm       = GPIO_NUM_9,
+    .gpio_num_ndrdy     = GPIO_NUM_10,
+    .gpio_num_miso      = GPIO_NUM_11,
+    .gpio_num_cs        = GPIO_NUM_12,
+    .gpio_num_clk       = GPIO_NUM_13,
+    .gpio_num_mosi      = GPIO_NUM_14,
+    .flag_drdy = 0,
+};
 
 #define I2C_BUS_PORT  0
 
@@ -46,6 +59,28 @@ extern void example_lvgl_ui_create_timer(double* f_loop1, double* f_loop2);
 extern void pulse_counter_start(void);
 extern double pulse_counter_get_freq_a(void);
 extern double pulse_counter_get_freq_b(void);
+
+void monitor_task(void* p)
+{
+    while(1)
+    {   
+        if(gpio_get_level(GPIO_NUM_38) == 0)
+        {
+            for(uint32_t i = 0; i < N_SAMPLES; i++) 
+            {
+                printf("%ld,%06.4f,%06.4f,%06.4f,%06.4f,%06.4f,%06.4f,%lf\n",
+                 i,
+                 history[i][0] * (3.3/8388608),history[i][1] * (3.3/8388608),history[i][2] * (3.3/8388608),
+                 history[i][3] * (3.3/8388608),history[i][4] * (3.3/8388608),history[i][5] * (3.3/8388608),
+                 history_f[i]
+                );
+            }
+            
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
 
 void app_main(void)
 {
@@ -110,21 +145,43 @@ void app_main(void)
 
     double loop1 = 0;
     double loop2 = 0;
+    double loop1_max = 0;
 
     ESP_LOGI(TAG, "Display LVGL Scroll Text");
     if (lvgl_port_lock(0)) {
         example_lvgl_demo_ui_start(disp);
-        example_lvgl_ui_create_timer(&loop1, &loop2);
+        example_lvgl_ui_create_timer(&loop1, &loop1_max);
 
         lvgl_port_unlock();
     }
 
     pulse_counter_start();
+    MCP3564_startUp(&MCP_instance);
 
-    while(1) {
-        loop1 = pulse_counter_get_freq_a();
-        loop2 = pulse_counter_get_freq_b();
+    gpio_config_t btn_cfg = {
+        .pin_bit_mask = 1ULL << GPIO_NUM_38,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .mode = GPIO_MODE_INPUT
+    };
+    gpio_config(&btn_cfg);
 
-        vTaskDelay(pdMS_TO_TICKS(25));
+    xTaskCreatePinnedToCore(monitor_task, "monitor_task", 2048*4, NULL, tskIDLE_PRIORITY + 5, NULL, PRO_CPU_NUM);
+
+    while(1) 
+    {
+        for(uint32_t i = 0; i < N_SAMPLES; i++)
+        {
+            loop1 = pulse_counter_get_freq_a();
+            loop2 = pulse_counter_get_freq_b();
+
+            if(loop1 > loop1_max) {
+                loop1_max = loop1;
+            }
+
+            history_f[i] = loop1;
+
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
     }
 }

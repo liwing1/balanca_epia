@@ -55,7 +55,7 @@ void lvgl_ui_counter_update(double loop1, double loop2)
 
 	lv_label_set_text(label_mid, temp_digit_string);
 
-	sprintf(temp_digit_string, "2: %10.6lf", loop2);
+	sprintf(temp_digit_string, "M: %10.6lf", loop2);
 
 	lv_label_set_text(label_bot, temp_digit_string);
 }

@@ -316,6 +316,7 @@ void MCP3564_spiHandle(void *p)
 
         if(format->channel == 5) {
             mcp_obj->flag_drdy = (mcp_obj->flag_drdy + 1) & (N_SAMPLES_MASK);
+            freq++;
         }
     }
 }
