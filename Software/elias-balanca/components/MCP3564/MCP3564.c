@@ -41,7 +41,7 @@
 typedef union{
     uint8_t bytes[5];
     struct{
-        uint8_t status;
+        // uint8_t status;
         uint8_t sign:4;
         uint8_t channel:4;
         uint8_t upper;
@@ -54,26 +54,11 @@ uint32_t freq = 0;
 
 static TaskHandle_t task_handle;
 static spi_device_handle_t spi;
-static const uint8_t snd_data[5] = {(_ADCDATA_ << 2) | _RD_CTRL_, 0x00, 0x00, 0x00, 0x00};
-static uint8_t* rcv_data;
-static spi_transaction_t adc_trans = {0};
 
 EXT_RAM_BSS_ATTR uint32_t history[N_SAMPLES][N_CHANNELS];
 
 void MCP3564_spiHandle(void* p);
 void test_task(void* p);
-
-static void IRAM_ATTR GPIO_DRDY_IRQHandler(void* arg)
-{
-    // Notify that ADC data is ready
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    xTaskNotifyFromISR(task_handle, 0, eNoAction, &xHigherPriorityTaskWoken);
-
-    // Yield to higher priority task if necessary
-    if (xHigherPriorityTaskWoken) {
-        portYIELD_FROM_ISR();
-    }
-}
 
 static void example_ledc_init(MCP3564_t* mcp_obj)
 {
@@ -113,7 +98,9 @@ static void init_spi(MCP3564_t* mcp_obj)
         .sclk_io_num = mcp_obj->gpio_num_clk,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = 0
+        .max_transfer_sz = 0,
+        .intr_flags = ESP_INTR_FLAG_SHARED,
+        .isr_cpu_id = 1
     };
 
     spi_device_interface_config_t dev_config = {
@@ -123,7 +110,7 @@ static void init_spi(MCP3564_t* mcp_obj)
         .mode = 0,  // can either be spi mode 0,0 or 1,1
         .duty_cycle_pos = 0,
         .cs_ena_pretrans = 0,
-        .cs_ena_posttrans = 10,
+        .cs_ena_posttrans = 0,
         .clock_speed_hz = SPI_CLOCK_SPEED,  // 1 MHz clock speed
         .spics_io_num = mcp_obj->gpio_num_cs,
         .flags = 0,
@@ -266,13 +253,6 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
     writeSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _WRT_CTRL_), 0x13);
     ESP_LOGI(TAG, "CONFIG0 = %lx", readSingleRegister(mcp_obj, ((_CONFIG0_ << 2) | _RD_CTRL_)));
 
-    // rcv_data = (uint8_t*)heap_caps_calloc(1, 5, MALLOC_CAP_DMA);
-    // adc_trans.rx_buffer = rcv_data;
-    rcv_data = (uint8_t*)heap_caps_calloc(1, 5, MALLOC_CAP_DMA);
-    adc_trans.rx_buffer = rcv_data;
-    adc_trans.tx_buffer = snd_data;
-    adc_trans.length = 8*5;
-
     xTaskCreatePinnedToCore(MCP3564_spiHandle, "MCP3564_spiHandle", 2048*4, (void*)mcp_obj, configMAX_PRIORITIES-1, &task_handle, APP_CPU_NUM);
 
     gpio_config_t gpio_cfg = {
@@ -280,12 +260,9 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_NEGEDGE
+        .intr_type = GPIO_INTR_DISABLE
     };
     gpio_config(&gpio_cfg);
-
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(mcp_obj->gpio_num_ndrdy, GPIO_DRDY_IRQHandler, (void*)mcp_obj);
 
     ESP_LOGI(TAG, "Start MCLK");
     example_ledc_init(mcp_obj);
@@ -304,30 +281,44 @@ void MCP3564_spiHandle(void *p)
 {
     adc_format_t* format;
     MCP3564_t* mcp_obj = (MCP3564_t*)p;
-    spi_transaction_t* rx_trans;
+
+    spi_transaction_t adc_trans = {
+        .flags = SPI_TRANS_CS_KEEP_ACTIVE | SPI_TRANS_USE_RXDATA | SPI_TRANS_USE_TXDATA,
+        .length = 8 // First byte addr
+    };
+    adc_trans.tx_data[0] = (_ADCDATA_ << 2) | _RD_CTRL_;
+
+    // When using SPI_TRANS_CS_KEEP_ACTIVE, bus must be locked/acquired
+    spi_device_acquire_bus(spi, portMAX_DELAY);
+
+    // Start polling ADC_DATA reg with cs low
+    spi_device_polling_transmit(spi, &adc_trans);
+
+    // Setup new trans to retrieve data
+    adc_trans.tx_data[0] = 0x00;
+    adc_trans.length = 4 * 8;
+
+    spi_device_polling_transmit(spi, &adc_trans);
 
     while (1)
     {
         // Wait for notification from ISR
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        while(gpio_get_level(mcp_obj->gpio_num_ndrdy) == 1);
 
-        spi_device_queue_trans(spi, &adc_trans, portMAX_DELAY);
+        spi_device_polling_transmit(spi, &adc_trans);
 
-        while(spi_device_get_trans_result(spi, &rx_trans, 0) == ESP_OK)
-        {
-            format = (adc_format_t*)rcv_data;
+        format = (adc_format_t*)adc_trans.rx_data;
 
-            history[mcp_obj->flag_drdy][format->channel] = \
-            ((uint32_t)format->sign   << 4 | (uint32_t)format->sign) << 24 | \
-            ((uint32_t)format->upper) << 16| \
-            ((uint32_t)format->high)  << 8 | \
-            ((uint32_t)format->low);
+        history[mcp_obj->flag_drdy][format->channel] = 
+        ((uint32_t)format->sign   << 4 | (uint32_t)format->sign) << 24 | 
+        ((uint32_t)format->upper) << 16| 
+        ((uint32_t)format->high)  << 8 | 
+        ((uint32_t)format->low);
 
-            freq++;
+        freq++;
 
-            if(is_row_filled(history[mcp_obj->flag_drdy], N_CHANNELS)) {
-                mcp_obj->flag_drdy = (mcp_obj->flag_drdy + 1) & (N_SAMPLES);
-            }
+        if(is_row_filled(history[mcp_obj->flag_drdy], N_CHANNELS)) {
+            mcp_obj->flag_drdy = (mcp_obj->flag_drdy + 1) & (N_SAMPLES_MASK);
         }
     }
 }

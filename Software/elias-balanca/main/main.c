@@ -9,6 +9,7 @@
 #include "esp_log.h"
 
 #include "MCP3564.h"
+#include "logic_analyzer_ws_server.h"
 
 #define BUTTON_PIN  38
 
@@ -56,4 +57,6 @@ void app_main(void)
     // MCP3564_startConversion(&MCP_instance);
 
     xTaskCreatePinnedToCore(monitor_task, "monitor", 2048*4, NULL, 5, NULL, PRO_CPU_NUM);
+
+    logic_analyzer_ws_server();
 }

@@ -1,2 +1,7 @@
 idf_component_register(SRCS "main.c"
-                    INCLUDE_DIRS ".")
+                    REQUIRES 
+                        logic_analyzer
+                        MCP3564
+                        driver
+                    INCLUDE_DIRS "."
+)
