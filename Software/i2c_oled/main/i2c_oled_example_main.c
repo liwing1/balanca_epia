@@ -18,8 +18,7 @@
 
 #include "MCP3564.h"
 
-static const char *TAG = "example";\
-static double history_f[N_SAMPLES] = {0};
+static const char *TAG = "example";
 
 MCP3564_t MCP_instance = {
     .gpio_num_pwm       = GPIO_NUM_9,
@@ -62,21 +61,30 @@ extern double pulse_counter_get_freq_b(void);
 
 void monitor_task(void* p)
 {
+    MCP3564_pause();
+    MCP_instance.flag_drdy = 0;
+
     while(1)
     {   
         if(gpio_get_level(GPIO_NUM_38) == 0)
         {
+            MCP3564_resume();
+            while(MCP_instance.flag_drdy != N_SAMPLES_MASK) {
+                printf("%ld\n", MCP_instance.flag_drdy);
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+            MCP3564_pause();
+
+            printf("ch4,ch5,f1\n");
+
             for(uint32_t i = 0; i < N_SAMPLES; i++) 
             {
-                printf("%ld,%06.4f,%06.4f,%06.4f,%06.4f,%06.4f,%06.4f,%lf\n",
-                 i,
-                 history[i][0] * (3.3/8388608),history[i][1] * (3.3/8388608),history[i][2] * (3.3/8388608),
-                 history[i][3] * (3.3/8388608),history[i][4] * (3.3/8388608),history[i][5] * (3.3/8388608),
-                 history_f[i]
-                );
+                printf("%06.4f,", history[i][4] * (3.3/8388608));
+                printf("%06.4f,", history[i][5] * (3.3/8388608));
+                printf("%lf\n", history_f[i]);
+
+                vTaskDelay(pdMS_TO_TICKS(5));
             }
-            
-            vTaskDelay(pdMS_TO_TICKS(10));
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -144,7 +152,7 @@ void app_main(void)
     lv_disp_set_rotation(disp, LV_DISP_ROT_NONE);
 
     double loop1 = 0;
-    double loop2 = 0;
+    // double loop2 = 0;
     double loop1_max = 0;
 
     ESP_LOGI(TAG, "Display LVGL Scroll Text");
@@ -173,13 +181,11 @@ void app_main(void)
         for(uint32_t i = 0; i < N_SAMPLES; i++)
         {
             loop1 = pulse_counter_get_freq_a();
-            loop2 = pulse_counter_get_freq_b();
+            // loop2 = pulse_counter_get_freq_b();
 
             if(loop1 > loop1_max) {
                 loop1_max = loop1;
             }
-
-            history_f[i] = loop1;
 
             vTaskDelay(pdMS_TO_TICKS(10));
         }

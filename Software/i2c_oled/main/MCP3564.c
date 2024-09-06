@@ -56,7 +56,9 @@ static TaskHandle_t task_handle;
 static spi_device_handle_t spi;
 
 EXT_RAM_BSS_ATTR uint32_t history[N_SAMPLES][N_CHANNELS];
+EXT_RAM_BSS_ATTR double history_f[N_SAMPLES];
 
+extern double pulse_counter_get_freq_a(void);
 void MCP3564_spiHandle(void* p);
 void test_task(void* p);
 
@@ -268,6 +270,17 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
     example_ledc_init(mcp_obj);
 }
 
+void MCP3564_pause(void)
+{
+    ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
+}
+
+void MCP3564_resume(void)
+{
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, LEDC_DUTY);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+}
+
 bool is_row_filled(uint32_t* row, size_t row_size) {
     for(size_t i = 0; i < row_size; i++) {
         if(row[i] == 0) {
@@ -315,7 +328,14 @@ void MCP3564_spiHandle(void *p)
         ((uint32_t)format->low);
 
         if(format->channel == 5) {
-            mcp_obj->flag_drdy = (mcp_obj->flag_drdy + 1) & (N_SAMPLES_MASK);
+            history_f[mcp_obj->flag_drdy] = pulse_counter_get_freq_a();
+            // mcp_obj->flag_drdy = (mcp_obj->flag_drdy + 1) & (N_SAMPLES_MASK);
+            if(mcp_obj->flag_drdy >= N_SAMPLES_MASK)
+            {
+                mcp_obj->flag_drdy = N_SAMPLES_MASK;
+            } else {
+                mcp_obj->flag_drdy++;
+            }
             freq++;
         }
     }

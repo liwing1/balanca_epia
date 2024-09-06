@@ -32,9 +32,12 @@ typedef struct{
 
 void MCP3564_startUp(MCP3564_t* mcp_obj);
 int32_t MCP3564_signExtend(uint32_t Bytes);
+void MCP3564_pause(void);
+void MCP3564_resume(void);
 
 extern uint32_t freq;
-extern EXT_RAM_BSS_ATTR uint32_t history[N_SAMPLES][N_CHANNELS];
+extern uint32_t history[N_SAMPLES][N_CHANNELS];
+extern double history_f[N_SAMPLES];
 
 #ifdef __cplusplus
 }
