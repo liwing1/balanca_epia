@@ -55,8 +55,8 @@ uint32_t freq = 0;
 static TaskHandle_t task_handle;
 static spi_device_handle_t spi;
 
-EXT_RAM_BSS_ATTR uint32_t history[N_SAMPLES][N_CHANNELS];
-EXT_RAM_BSS_ATTR double history_f[N_SAMPLES];
+EXT_RAM_BSS_ATTR uint32_t history[N_SAMPLES][N_CHANNELS] = {0};
+EXT_RAM_BSS_ATTR double history_f[N_SAMPLES] = {0};
 
 extern double pulse_counter_get_freq_a(void);
 void MCP3564_spiHandle(void* p);
@@ -85,11 +85,6 @@ static void example_ledc_init(MCP3564_t* mcp_obj)
         .hpoint         = 0
     };
     ledc_channel_config(&ledc_channel);
-
-    // Set duty to 50%
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, LEDC_DUTY);
-    // Update duty to apply the new value
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 }
 
 static void init_spi(MCP3564_t* mcp_obj)
@@ -187,21 +182,17 @@ static uint32_t readSingleRegister(MCP3564_t* mcp_obj, uint8_t RD_CMD)
         READ_VALUE  = (uint32_t)trans.rx_data[1] << 8;
         READ_VALUE |= (uint32_t)trans.rx_data[2];
     }
-    else if (REG_ADDR == _ADCDATA_ || REG_ADDR == _SCAN_ || REG_ADDR == _TIMER_ || REG_ADDR == _OFFSETCAL_ || REG_ADDR == _GAINCAL_ || REG_ADDR == _RESERVED_B_) 
+    else if (REG_ADDR == _SCAN_ || REG_ADDR == _TIMER_ || REG_ADDR == _OFFSETCAL_ || REG_ADDR == _GAINCAL_ || REG_ADDR == _RESERVED_B_)
     {
-        uint8_t snd_data[5] = {0x00};
-        snd_data[0] = RD_CMD;
-        uint8_t rcv_data[5] = {0x00};
-        trans.length = 8 * 5;
-        trans.flags = 0;
-        trans.tx_buffer = snd_data;
-        trans.rx_buffer = rcv_data;
+        trans.length = 32;
+        trans.tx_data[0] = RD_CMD;
+        trans.tx_data[1] = 0x00;
+        trans.tx_data[2] = 0x00;
+        trans.tx_data[3] = 0x00;
         spi_device_transmit(spi, &trans);
-
-        READ_VALUE  = ((uint32_t)rcv_data[1]) << 24;
-        READ_VALUE |= ((uint32_t)rcv_data[2]) << 16;
-        READ_VALUE |= ((uint32_t)rcv_data[3]) << 8;
-        READ_VALUE |= ((uint32_t)rcv_data[4]);
+        READ_VALUE  = (uint32_t)trans.rx_data[1] << 16;
+        READ_VALUE |= (uint32_t)trans.rx_data[2] << 8;
+        READ_VALUE |= (uint32_t)trans.rx_data[3];      
     }
     return READ_VALUE;
 }
@@ -292,19 +283,21 @@ bool is_row_filled(uint32_t* row, size_t row_size) {
 
 void MCP3564_spiHandle(void *p)
 {
-    adc_format_t* format;
+    int expected_channel = 0;  // Start the cycle at 0
     MCP3564_t* mcp_obj = (MCP3564_t*)p;
 
     spi_transaction_t adc_trans = {
         .flags = SPI_TRANS_CS_KEEP_ACTIVE | SPI_TRANS_USE_RXDATA | SPI_TRANS_USE_TXDATA,
         .length = 8 // First byte addr
     };
-    adc_trans.tx_data[0] = (_ADCDATA_ << 2) | _RD_CTRL_;
+
+    adc_format_t* format = (adc_format_t*)adc_trans.rx_data;
 
     // When using SPI_TRANS_CS_KEEP_ACTIVE, bus must be locked/acquired
     spi_device_acquire_bus(spi, portMAX_DELAY);
 
     // Start polling ADC_DATA reg with cs low
+    adc_trans.tx_data[0] = (_ADCDATA_ << 2) | _RD_CTRL_;
     spi_device_polling_transmit(spi, &adc_trans);
 
     // Setup new trans to retrieve data
@@ -319,24 +312,27 @@ void MCP3564_spiHandle(void *p)
 
         spi_device_polling_transmit(spi, &adc_trans);
 
-        format = (adc_format_t*)adc_trans.rx_data;
-
         history[mcp_obj->flag_drdy][format->channel] = 
-        ((uint32_t)format->sign   << 4 | (uint32_t)format->sign) << 24 | 
+        ((uint32_t)format->sign << 4 | (uint32_t)format->sign) << 24 | 
         ((uint32_t)format->upper) << 16| 
         ((uint32_t)format->high)  << 8 | 
         ((uint32_t)format->low);
 
-        if(format->channel == 5) {
+        // Canal lido fora de seq. Perdeu leitura anterior
+        if(format->channel != expected_channel) {
+            history[mcp_obj->flag_drdy][expected_channel] = history[(mcp_obj->flag_drdy - 1) & (N_SAMPLES_MASK)][expected_channel];
+        }
+        // Move to the next expected value
+        expected_channel = (format->channel == 0) ? 5 : format->channel - 1;
+
+        if(format->channel == 0) {
             history_f[mcp_obj->flag_drdy] = pulse_counter_get_freq_a();
             // mcp_obj->flag_drdy = (mcp_obj->flag_drdy + 1) & (N_SAMPLES_MASK);
-            if(mcp_obj->flag_drdy >= N_SAMPLES_MASK)
-            {
-                mcp_obj->flag_drdy = N_SAMPLES_MASK;
-            } else {
+            if(mcp_obj->flag_drdy < N_SAMPLES_MASK) {
                 mcp_obj->flag_drdy++;
+            } else {
+                mcp_obj->flag_drdy = N_SAMPLES_MASK;
             }
-            freq++;
         }
     }
 }

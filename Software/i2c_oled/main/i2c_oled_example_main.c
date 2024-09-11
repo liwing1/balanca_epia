@@ -69,7 +69,7 @@ void monitor_task(void* p)
         if(gpio_get_level(GPIO_NUM_38) == 0)
         {
             MCP3564_resume();
-            while(MCP_instance.flag_drdy != N_SAMPLES_MASK) {
+            while(MCP_instance.flag_drdy < N_SAMPLES_MASK) {
                 printf("%ld\n", MCP_instance.flag_drdy);
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
