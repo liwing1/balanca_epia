@@ -39,7 +39,7 @@
 #define LEDC_FREQUENCY          (20000000) // Frequency in Hertz. Set frequency at 4 kHz
 
 typedef union{
-    uint8_t bytes[5];
+    uint8_t bytes[4];
     struct{
         // uint8_t status;
         uint8_t sign:4;

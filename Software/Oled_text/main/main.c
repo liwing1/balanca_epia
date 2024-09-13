@@ -156,7 +156,7 @@ void app_main(void) {
                 int32_t valor = dado&0xFFFFFF;
 
                 // imprima o canal e o valor como hexadecimal
-                printf("dado = %lX\n",dado);               
+                printf("dado = %08lX\n",dado);               
                 printf("Canal %X: %f\n",canal,(float)valor*3.3/8388606.0);
 
             }

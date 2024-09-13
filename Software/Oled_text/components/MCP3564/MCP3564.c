@@ -65,7 +65,7 @@ bool flag_captura_adc=true;
 typedef union{
     uint8_t bytes[5];
     struct{
-        uint8_t status;
+        // uint8_t status;
         uint8_t sign:4;
         uint8_t channel:4;
         uint8_t upper;
@@ -488,23 +488,13 @@ void MCP3564_spiHandle()
         // ((uint32_t)format->low);
 
         int32_t dado = 
-        ((uint32_t)format->bytes[1]) << 24|
-        ((uint32_t)format->bytes[2]) << 16|
-        ((uint32_t)format->bytes[3]) <<  8| 
-        ((uint32_t)format->bytes[4]);
+        ((uint32_t)format->bytes[0]) << 24|
+        ((uint32_t)format->bytes[1]) << 16|
+        ((uint32_t)format->bytes[2]) <<  8| 
+        ((uint32_t)format->bytes[3]);
 
 
         //int32_t dado = 0x04123456 | ((pe_adc%6)<<28);
-            
-
-
-    // Set CS low
-    //gpio_set_level(PIN_NUM_CS, 0);
-
-    // Set CS high
-    //gpio_set_level(PIN_NUM_CS, 1);
-
-   
 
      
             //int32_t dado = pe_adc;
@@ -517,7 +507,7 @@ void MCP3564_spiHandle()
             // }
             queue_adc[pe_adc] = (uint32_t)dado;
 
-            ps_adc=(pe_adc+1)&(QUEUE_ADC_LENGTH-1);
+            // ps_adc=(pe_adc+1)&(QUEUE_ADC_LENGTH-1);
         
         }
         
