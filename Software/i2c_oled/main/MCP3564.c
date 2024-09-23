@@ -193,6 +193,8 @@ static uint32_t readSingleRegister(MCP3564_t* mcp_obj, uint8_t RD_CMD)
         READ_VALUE  = (uint32_t)trans.rx_data[1] << 16;
         READ_VALUE |= (uint32_t)trans.rx_data[2] << 8;
         READ_VALUE |= (uint32_t)trans.rx_data[3];      
+
+        printf("32bit: %lx\n", *(uint32_t*)&trans.rx_data);
     }
     return READ_VALUE;
 }
@@ -205,8 +207,8 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
     ESP_LOGI(TAG, "set MCP configs");
 
     //GAINCAL --> (8,253,056 / 8,388,607 = 1.615894%) Gain Error w/2.048V Input
-    writeSingleRegister(mcp_obj, ((_GAINCAL_ << 2) | _WRT_CTRL_), 0x800000);     
-    ESP_LOGI(TAG, "GAINCAL = %lx", readSingleRegister(mcp_obj, ((_GAINCAL_ << 2) | _RD_CTRL_)));
+    writeSingleRegister(mcp_obj, ((_GAINCAL_ << 2) | _WRT_CTRL_), 0x807060);     
+    ESP_LOGI(TAG, "GAINCAL(%x) = %lx", ((_GAINCAL_ << 2) | _WRT_CTRL_), readSingleRegister(mcp_obj, ((_GAINCAL_ << 2) | _RD_CTRL_)));
 
     //OFFSETCAL --> +62 Counts of Offset Cancellation (Measured Offset is Negative).
     writeSingleRegister(mcp_obj, ((_OFFSETCAL_ << 2) | _WRT_CTRL_), 0x000000);
