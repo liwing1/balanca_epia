@@ -1,7 +1,2 @@
-idf_component_register(
-					SRCS 
-						"hello_world_main.c"
-					REQUIRES 
-						logic_analyzer
-						driver
+idf_component_register(SRCS "main.c" "Loop.c"
                     INCLUDE_DIRS "")
