@@ -12,12 +12,13 @@
 #include "driver/pulse_cnt.h"
 #include "esp_timer.h"
 
+#include "Loop.h"
 
-int32_t Media_loop=17000;
-int64_t Media_64=17000<<8;
 
-bool Tem_veiculo = false;
-#define ALFA 0.01
+int32_t Media_loop=14600;
+int64_t Media_64=14600<<8;
+
+static bool Tem_veiculo = false;
 
 #define LOOP1               17
 #define LOOP2               18
@@ -43,11 +44,11 @@ esp_timer_handle_t periodic_timer;
 uint64_t start_time = 0;
 
 // Queue implementation
-static uint32_t queue[QUEUE_LENGTH];
+static EXT_RAM_BSS_ATTR uint32_t queue[QUEUE_LENGTH];
 static int pe = 0, ps = 0;
 
 
-uint32_t dequeue() {
+uint32_t Loop_dequeue() {
     if (ps == pe) return 0; // Queue is empty
     ps = (ps + 1) & (QUEUE_LENGTH - 1);
     return queue[ps];
@@ -63,10 +64,7 @@ static void IRAM_ATTR timer_callback(void* arg) {
 static bool IRAM_ATTR pcnt_on_reach(pcnt_unit_handle_t unit, const pcnt_watch_event_data_t *edata, void *user_ctx) {
 
     uint64_t end_time = esp_timer_get_time();
-
-    //gpio_set_level(LED_YELLOW,1);
-
-    uint64_t dt=end_time - start_time;
+    uint64_t dt = end_time - start_time;
 
     // Poe na Fila
     pe = (pe + 1) & (QUEUE_LENGTH - 1);
@@ -74,30 +72,27 @@ static bool IRAM_ATTR pcnt_on_reach(pcnt_unit_handle_t unit, const pcnt_watch_ev
 
     pcnt_unit_stop(pcnt_unit);
 
-
     //se tiver veiculo nao atualiza a media
-    if (Tem_veiculo==false){
-        Media_64=Media_64-(Media_64>>8)+dt;
-        Media_loop=(int) (Media_64>>8);
-    }
+    //if (Tem_veiculo == true) {
+        Media_64 = Media_64 - (Media_64>>8) + dt;
+        Media_loop = (int)(Media_64>>8);
+    //}
 
     //Se o valor do loop for menor que media - 50, tem veiculo
-    if (dt < Media_loop-50){
-        Tem_veiculo=true;
+    if (dt < Media_loop-50) {
+        Tem_veiculo = true;
     }    
 
     //Se o valor do loop for maior que media - 30, nao tem veiculo
-    else if (dt > Media_loop-30){
-        Tem_veiculo=false;
+    else if (dt > Media_loop-30) {
+        Tem_veiculo = false;
     }
-
-
-    //gpio_set_level(LED_YELLOW,0);    
+ 
     return true;
 }
 
 
-void Init_loop(){
+void Loop_Init(){
 
     // Initialize PCNT
     pcnt_unit_config_t unit_config = {
@@ -147,4 +142,9 @@ void Init_loop(){
 
     // Start the timer
     ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, TIMER_INTERVAL_MS * 1000));
+}
+
+
+bool Loop_is_vehicle_detected(void) {
+    return Tem_veiculo;
 }

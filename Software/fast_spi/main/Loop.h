@@ -6,9 +6,11 @@ extern "C" {
 #endif //__cplusplus
 
 #include <stdint.h>
+#include <stdbool.h>
 
-void Init_loop();
-uint32_t dequeue();
+void Loop_Init();
+uint32_t Loop_dequeue();
+bool Loop_is_vehicle_detected(void);
 
 #ifdef __cplusplus
 }
