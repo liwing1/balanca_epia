@@ -11,7 +11,7 @@ extern "C" {
 #define N_CHANNELS      6
 #define N_SAMPLES       16384
 #define N_SAMPLES_MASK  N_SAMPLES-1
-#define QUEUE_ADC_LENGTH 16*1024
+#define QUEUE_ADC_LENGTH N_SAMPLES
 
 typedef struct{
     // Pin mapping
@@ -32,6 +32,10 @@ void MCP3564_startUp(MCP3564_t* mcp_obj);
 uint32_t MCP3564_readVoltage(MCP3564_t* mcp_obj);
 void MCP3564_pause(void);
 void MCP3564_resume(void);
+int32_t dequeue_adc();
+int32_t dequeue_hz();
+
+extern uint32_t delta_time;
 
 #ifdef __cplusplus
 }

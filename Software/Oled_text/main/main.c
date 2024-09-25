@@ -26,6 +26,8 @@
 
 #define TIMER_INTERVAL_MS     (20)  // 20 ms timer interval
 
+#define SPI_CLK_HZ          20000000
+
 extern int32_t Media_loop;
 extern bool Tem_veiculo;
 
@@ -38,6 +40,19 @@ extern pcnt_unit_handle_t pcnt_unit;
 extern esp_timer_handle_t periodic_timer;
 extern bool flag_captura_adc;
 extern int32_t pe_adc;
+uint8_t Espera_veiculo=' ';
+bool Botao_B_velho=false;
+
+MCP3564_t MCP_instance = {
+    .gpio_num_pwm       = GPIO_NUM_9,
+    .gpio_num_ndrdy     = GPIO_NUM_10,
+    .gpio_num_miso      = GPIO_NUM_11,
+    .gpio_num_cs        = GPIO_NUM_12,
+    .gpio_num_clk       = GPIO_NUM_13,
+    .gpio_num_mosi      = GPIO_NUM_14,
+    .spi_clk_hz         = SPI_CLK_HZ,
+    .flag_drdy = 0,
+};
 
 static void IRAM_ATTR timer_callback(void* arg) {
     start_time = esp_timer_get_time();
@@ -66,6 +81,12 @@ void task_oled(void *pvParameter) {
         sprintf(str, "Media = %d", (int) Media_loop);
         ssd1306_draw_string(0, 48, str, &Font_8x16,1);
 
+        // atualiza o led verde com o estado de tem veiculo
+        gpio_set_level(LED_GREEN,!Tem_veiculo);
+
+        //mostra estado de espera Espera_veiculo
+        ssd1306_draw_char(15*8,0,Espera_veiculo, &Font_8x16,1);
+
         ssd1306_display();
       
         vTaskDelay(80 / portTICK_PERIOD_MS); // Small delay to prevent watchdog trigger
@@ -76,6 +97,16 @@ void task_oled(void *pvParameter) {
 
 //uint32_t *queue_adc;
 
+void update_dt(void* p) {
+    uint32_t dt = 0;
+    while(1) {
+        dt = dequeue();
+        if(dt) {
+            delta_time = dt;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
 
 void app_main(void) {
     ESP_LOGI(TAG, "Initializing...");
@@ -121,16 +152,15 @@ void app_main(void) {
 
     //create a task to update the oled
     xTaskCreate(&task_oled, "task_oled", 8192, NULL, 5, NULL);
+    xTaskCreate(update_dt, "update_dt", 8192, NULL, 10, NULL);
 
 
     // Inicializa o ADC com a SPI e o gerador de clock
-    MCP3564_startUp();
+    MCP3564_startUp(&MCP_instance);
 
     int32_t pe1=-1;
 
     while (1) {
-
-        uint32_t delta_time = dequeue();
 
         if (delta_time > 0) {
             //printf("%lu\n", delta_time);
@@ -150,13 +180,13 @@ void app_main(void) {
                 int32_t dado = dequeue_adc();
 
                 // canal nos bits 32,31,30,29
-                int canal = 5-((dado>>28)&0x0F);
+                int canal = 10-((dado>>28)&0x0F);
 
                 // valor nos bits 27 a 0
-                int32_t valor = dado&0xFFFFFF;
+                int32_t valor = (dado&0xFFFFFFF)|((dado<<8)&0xF0000000);
 
                 // imprima o canal e o valor como hexadecimal
-                printf("dado = %08lX\n",dado);               
+                printf("dado = %8lX\n",dado); 
                 printf("Canal %X: %f\n",canal,(float)valor*3.3/8388606.0);
 
             }
@@ -170,7 +200,19 @@ void app_main(void) {
 
     // se Tem_veiculo for true e pe1=0, entao anota o pe_adc
 
-        if (Tem_veiculo && (pe1==-1)){
+
+        // se o Botao_B for pressionado, troca a entre espera veiculo e nao espera veiculo
+        if (Botao_B()&&(!Botao_B_velho)){
+            if (Espera_veiculo==' ') Espera_veiculo='E';
+            else if (Espera_veiculo=='E') Espera_veiculo=' ';
+       }
+        Botao_B_velho=Botao_B();
+
+        if ((Espera_veiculo=='E') && (pe1==-1)){
+            flag_captura_adc=true;
+        }
+
+        if ((Espera_veiculo=='E') && Tem_veiculo && (pe1==-1)){
             pe1=pe_adc;
             //printf(">pe1 = %ld\n",pe1);
         }
@@ -180,6 +222,8 @@ void app_main(void) {
             //printf(">pe_adc = %ld\n",pe_adc);
 
             int32_t valor[2];
+
+            Espera_veiculo='I';
 
             vTaskDelay(190/portTICK_PERIOD_MS); // tempo para acabar veiculo
             flag_captura_adc=false;
@@ -196,36 +240,36 @@ void app_main(void) {
                 int32_t dado = dequeue_adc();
 
                 // canal nos bits 32,31,30,29
-                int canal = 5-((dado>>28)&0x0F);
+                int canal = 10-((dado>>28)&0x0F);
 
                 // valor nos bits 27 a 0
-                valor[canal] = dado&0xFFFFFF;
+                valor[canal] =(dado&0xFFFFFFF)|((dado<<8)&0xF0000000);
 
                 //tira da fila
                 dado = dequeue_adc();
                 int32_t dado1 = dado;
 
                 // canal nos bits 32,31,30,29
-                canal = 5-((dado>>28)&0x0F);
+                canal = 10-((dado>>28)&0x0F);
 
                 // valor nos bits 27 a 0
-                valor[canal] = dado&0xFFFFFF;              
+                valor[canal] =(dado&0xFFFFFFF)|((dado<<8)&0xF0000000);             
 
                 // imprima o canal e o valor como hexadecimal
-                printf("%lX, %lX\n",dado,dado1);
-                printf("%f, %f\n",(float)valor[0]*3.3/8388606.0,(float)valor[1]*3.3/8388606.0);
+                //printf("%lX, %lX\n",dado,dado1);
+                dequeue_hz();
+                printf("%f %f %lu\n",(float)valor[0]*3.3/8388606.0,(float)valor[1]*3.3/8388606.0, dequeue_hz());
                 //if((i&31)==0) vTaskDelay(10/portTICK_PERIOD_MS); // Small delay to allow real time to stop
-                vTaskDelay(10/portTICK_PERIOD_MS); // Small delay to allow real time to stop
+                vTaskDelay(5/portTICK_PERIOD_MS); // Small delay to allow real time to stop
 
             }
 
             pe1=-1;
-            vTaskDelay(10/portTICK_PERIOD_MS); // Small delay to allow real time to continue
-            flag_captura_adc=true;
-        }
+            Espera_veiculo=' ';
 
-        // atualiza o led verde com o estado de tem veiculo
-        gpio_set_level(LED_GREEN,!Tem_veiculo);
+            vTaskDelay(10/portTICK_PERIOD_MS); // Small delay to allow real time to continue
+
+        }
 
         // Copia botoes para Led - teste
         //int s;

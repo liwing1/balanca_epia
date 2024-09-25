@@ -20,6 +20,7 @@
 #include "soc/soc.h"
 #include "soc/spi_struct.h"
 
+#include "Loop.h"
 #include "MCP3564.h"
 
 #define TAG "MCP3564"
@@ -45,8 +46,6 @@
 #define _WRT_CTRL_ 0b01000010               //MCP3564 Write-CMD Command-Byte.
 #define _RD_CTRL_  0b01000001               //MCP3564 Read-CMD Command-Byte.
 
-#define N_SAMPLES       16384 // (1<<8) 
-#define N_SAMPLES_MASK  N_SAMPLES-1  
 
 // Macro to reverse endianness
 #define INVERT_ENDIANNESS(x) (_Generic((x), \
@@ -58,11 +57,28 @@
 ))
 
 static spi_device_handle_t spi;
-int32_t queue_adc[QUEUE_ADC_LENGTH];
+uint32_t delta_time = 0;
+int32_t EXT_RAM_BSS_ATTR queue_adc[QUEUE_ADC_LENGTH];
+int32_t EXT_RAM_BSS_ATTR queue_hz[QUEUE_ADC_LENGTH];
+int32_t pe_adc = 0, ps_adc = 0;
+int32_t pe_hz = 0, ps_hz = 0;
+bool flag_captura_adc=true;
 
 ///////////////////////
 /// LOCAL FUNCTIONS ///
 ///////////////////////
+
+static void IRAM_ATTR GPIO_DRDY_IRQHandler(void* arg) {
+    MCP3564_t* p = (MCP3564_t*)arg;
+
+    if(flag_captura_adc) {
+        queue_adc[pe_adc] = MCP3564_readVoltage(p);
+        queue_hz[pe_adc] = delta_time;
+
+        pe_adc = (pe_adc + 1) & (N_SAMPLES_MASK);
+        pe_hz = (pe_hz + 1) & (N_SAMPLES_MASK);
+    }
+}
 
 static uint32_t IRAM_ATTR fast_spi_trans(uint32_t data, size_t bitlen) {
 	spi_ll_set_mosi_bitlen(&GPSPI2, bitlen);
@@ -225,6 +241,18 @@ static uint32_t read_single_register(MCP3564_t* mcp_obj, uint8_t REG_ADDR)
 /// PUBLIC FUNCTIONS ///
 ////////////////////////
 
+int32_t dequeue_adc() {
+    if (ps_adc == pe_adc) return 0; // Queue is empty
+    ps_adc = (ps_adc + 1) & (QUEUE_ADC_LENGTH - 1);
+    return queue_adc[ps_adc];
+}
+
+int32_t dequeue_hz() {
+    if (ps_hz == pe_hz) return queue_hz[ps_hz]; // Queue is empty
+    ps_hz = (ps_hz + 1) & (QUEUE_ADC_LENGTH - 1);
+    return queue_hz[ps_hz];
+}
+
 void MCP3564_startUp(MCP3564_t* mcp_obj) 
 {   
     init_spi(mcp_obj);
@@ -273,6 +301,12 @@ void MCP3564_startUp(MCP3564_t* mcp_obj)
     //CONFIG0 --> VREF_SEL = extVOLT, CLK_SEL = extCLK, CS_SEL = No Bias, ADC_MODE = Standby Mode --> (0b00010010).
     write_single_register(mcp_obj, _CONFIG0_, 0x00000013);
     ESP_LOGI(TAG, "CONFIG0 = 0x%08lX", (unsigned long)read_single_register(mcp_obj, _CONFIG0_));
+
+	gpio_set_direction(mcp_obj->gpio_num_ndrdy, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(mcp_obj->gpio_num_ndrdy, GPIO_FLOATING);
+    gpio_set_intr_type(mcp_obj->gpio_num_ndrdy, GPIO_INTR_NEGEDGE);
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(mcp_obj->gpio_num_ndrdy, GPIO_DRDY_IRQHandler, (void*)mcp_obj);   
 }
 
 

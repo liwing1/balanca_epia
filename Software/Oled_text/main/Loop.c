@@ -11,15 +11,16 @@
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "esp_task_wdt.h"
-#include "..\components\MCP3564\MCP3564.h"
 #include "Perifericos.h"
 #include "driver/gptimer.h" 
 #include "driver/pulse_cnt.h"
 #include "esp_timer.h"
 
+#include "Loop.h"
 
-int32_t Media_loop=17000;
-int64_t Media_64=17000<<8;
+
+int32_t Media_loop=17200;
+int64_t Media_64=17200<<8;
 
 bool Tem_veiculo=false;
 #define ALFA 0.01
@@ -47,7 +48,7 @@ static int pe = 0, ps = 0;
 
 
 uint32_t dequeue() {
-    if (ps == pe) return 0; // Queue is empty
+    if (ps == pe) return queue[ps]; // Queue is empty
     ps = (ps + 1) & (QUEUE_LENGTH - 1);
     return queue[ps];
 }
@@ -68,18 +69,18 @@ static bool IRAM_ATTR pcnt_on_reach(pcnt_unit_handle_t unit, const pcnt_watch_ev
 
 
     //se tiver veiculo nao atualiza a media
-    if (Tem_veiculo==false){
+    //if (Tem_veiculo==false){
         Media_64=Media_64-(Media_64>>8)+dt;
         Media_loop=(int) (Media_64>>8);
-    }
+    //}
 
     //Se o valor do loop for menor que media - 50, tem veiculo
-    if (dt < Media_loop-50){
+    if (dt < Media_loop-30){
         Tem_veiculo=true;
     }    
 
     //Se o valor do loop for maior que media - 30, nao tem veiculo
-    else if (dt > Media_loop-30){
+    else if (dt > Media_loop-15){
         Tem_veiculo=false;
     }
 
